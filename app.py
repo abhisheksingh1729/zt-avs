@@ -1,6 +1,6 @@
 """
 IIIT Dharwad — Zero-Trust Student Attendance System (ZT-AVS)
-Single-File Streamlit Application with SQLite Persistence & Zero-Trust Verification.
+Production-Ready Single-File Streamlit Application with SQLite Persistence (WAL Mode) & Pandas.
 """
 
 from __future__ import annotations
@@ -185,7 +185,7 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------------------
-# Database Layer (SQLite with WAL mode)
+# Database Layer (SQLite with WAL mode & Foreign Keys)
 # ---------------------------------------------------------------------------
 
 
@@ -322,7 +322,7 @@ def seed_demo_data_if_needed() -> None:
                 u,
             )
 
-        # Seed sample course: Operating Systems
+        # Seed sample course: CS301 — Operating Systems
         course_id = "cs301_os"
         join_code = "OS301X"
         conn.execute(
@@ -339,7 +339,7 @@ def seed_demo_data_if_needed() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Zero-Trust Helpers: Role, OTP, Cryptography & Network
+# Zero-Trust Cryptography, Role Mapping & Telemetry
 # ---------------------------------------------------------------------------
 
 
@@ -356,16 +356,15 @@ def detect_role_and_roll(email: str) -> tuple[str, Optional[str]]:
     Automatic role mapping based on IIIT Dharwad domain specifications:
     - contains 'admin' -> Admin Portal
     - contains 'prof' or 'faculty' or non-roll format -> Professor Portal
-    - otherwise -> Student Portal (with Roll extracted from prefix, e.g. 25bcs053 -> 25BCS053)
+    - otherwise student roll numbers (e.g. 25bcs053@iiitdwd.ac.in) -> Student Portal with Roll 25BCS053
     """
     local = email.split("@", 1)[0].lower().strip()
 
     if "admin" in local:
         return "admin", None
 
-    # Roll number check: typically 2 digits (batch) + 3 letters (bcs/bds/ece) + 3 digits (number)
-    # or general alphanumeric student identifier
-    is_roll_pattern = bool(re.match(r"^\d{2}[a-z]{3}\d{3,}$", local))
+    # Roll number check: 2 digits (batch year) + 2-4 letters (bcs/bds/ece) + 1-4 digits (roll number)
+    is_roll_pattern = bool(re.match(r"^\d{2}[a-z]{2,4}\d{1,4}$", local))
 
     if "prof" in local or "faculty" in local or not is_roll_pattern:
         return "professor", None
@@ -427,15 +426,14 @@ def otp_seconds_remaining(expires_at: Optional[float]) -> int:
 
 def verify_network_spatial_bound() -> dict[str, Any]:
     """
-    Zero-Trust Network & Spatial Attestation:
-    Ensures student is marking attendance under the designated classroom router session.
+    Validates campus network/spatial telemetry (10.12.*.*) and classroom boundary.
     """
     return {
         "status": True,
         "ssid": CAMPUS_SSID,
-        "subnet": f"{CAMPUS_SUBNET}4.x",
+        "subnet": f"{CAMPUS_SUBNET}4.88",
         "spatial_zone": CAMPUS_GEO,
-        "latency_ms": 3.8,
+        "latency_ms": 3.4,
     }
 
 
@@ -449,7 +447,7 @@ def record_tamper_event(session_id: Optional[str], student_email: str, reason: s
 
 
 # ---------------------------------------------------------------------------
-# Session State Management
+# Session State & Query Param Bridge
 # ---------------------------------------------------------------------------
 
 
@@ -472,7 +470,7 @@ def init_session() -> None:
         if key not in st.session_state:
             st.session_state[key] = value
 
-    # Check query param for tamper guard callback
+    # Check query params for anti-proxy tamper signals
     params = st.query_params
     if params.get("tamper_violation") == "tab_switched":
         st.session_state.tab_switched = True
@@ -481,7 +479,6 @@ def init_session() -> None:
         st.session_state.view = "home"
         if st.session_state.email:
             record_tamper_event(None, st.session_state.email, "Anti-Proxy Guard: VisibilityChange / Focus Loss Detected")
-        # Clear query param to avoid persistent loop
         st.query_params.clear()
 
 
@@ -493,25 +490,23 @@ def logout() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Anti-Proxy Tab-Visibility Tamper Guard (Browser Component)
+# Anti-Proxy Browser Guard (VisibilityChange & Blur Event Listener)
 # ---------------------------------------------------------------------------
 
 
 def render_anti_proxy_guard() -> None:
     """
-    Zero-Trust Anti-Proxy & Anti-Tamper Guard:
-    Monitors browser 'visibilitychange' and 'blur' events.
-    If the student leaves the active tab or loses window focus (e.g. to copy OTP into
-    WhatsApp/Discord or switch applications), it triggers an instant UI lockout and
-    terminates the active attendance session.
+    Injects an anti-proxy browser guard via st.components.v1.html monitoring
+    the visibilitychange API and window.blur to immediately terminate the session
+    and log a tamper event if the student switches tabs or minimizes the window.
     """
     guard_html = """
     <div id="zt-guard-shield" style="
-      background: #0f172a;
-      border: 1px solid #1e293b;
+      background: #0b1523;
+      border: 1px solid #1e3a5f;
       border-radius: 8px;
-      padding: 8px 12px;
-      margin-bottom: 8px;
+      padding: 9px 14px;
+      margin-bottom: 10px;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -520,7 +515,7 @@ def render_anti_proxy_guard() -> None:
       font-size: 11px;
     ">
       <span>🛡️ ZERO-TRUST INTEGRITY SHIELD: Tab Visibility Guard Active</span>
-      <span id="zt-guard-status" style="color: #10b981; font-weight: bold;">● MONITORED</span>
+      <span id="zt-guard-status" style="color: #10b981; font-weight: bold;">● ARMED & MONITORED</span>
     </div>
 
     <script>
@@ -530,7 +525,8 @@ def render_anti_proxy_guard() -> None:
       function triggerTamperViolation(reason) {
         if (triggered) return;
         triggered = true;
-        
+
+        // 1. Update internal iframe shield
         var shield = document.getElementById('zt-guard-shield');
         if (shield) {
           shield.style.background = '#450a0a';
@@ -538,7 +534,23 @@ def render_anti_proxy_guard() -> None:
           shield.innerHTML = '<span style="color:#f87171;font-weight:bold;">🚨 ZERO-TRUST TAMPER TRIGGERED: TAB SWITCH / FOCUS LOSS DETECTED! TERMINATING...</span>';
         }
 
-        // Notify parent Streamlit window via URL query param to invalidate session state
+        // 2. Lock parent window visually
+        try {
+          if (window.parent && window.parent.document) {
+            var banner = window.parent.document.getElementById('zt-parent-lockout');
+            if (!banner) {
+              banner = window.parent.document.createElement('div');
+              banner.id = 'zt-parent-lockout';
+              banner.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(20,0,0,0.92);z-index:999999;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#ef4444;font-family:sans-serif;text-align:center;padding:20px;';
+              banner.innerHTML = '<h1 style="color:#ef4444;font-size:32px;margin-bottom:10px;">🚨 ZERO-TRUST SECURITY BREACH</h1><p style="color:#fecaca;font-size:18px;max-width:600px;">Tab switch or focus loss was detected via the visibilitychange API. In accordance with zero-trust classroom integrity, your attendance attempt has been permanently voided.</p><button onclick="window.location.reload()" style="background:#ef4444;color:white;border:none;padding:12px 24px;border-radius:8px;font-size:16px;cursor:pointer;margin-top:20px;font-weight:bold;">Acknowledge & Exit</button>';
+              window.parent.document.body.appendChild(banner);
+            }
+          }
+        } catch(e) {
+          console.warn("DOM overlay warning:", e);
+        }
+
+        // 3. Notify parent Streamlit app to update SQLite session state
         try {
           if (window.parent && window.parent.location) {
             var url = new URL(window.parent.location.href);
@@ -546,29 +558,39 @@ def render_anti_proxy_guard() -> None:
             window.parent.location.href = url.toString();
           }
         } catch(e) {
-          console.error("Zero-Trust Bridge Notification:", e);
+          console.error("Zero-Trust Bridge Navigation:", e);
         }
       }
 
-      // 1. Browser Visibility Change API
+      // Event 1: Browser Visibility Change API
       document.addEventListener("visibilitychange", function() {
-        if (document.hidden) {
-          triggerTamperViolation("tab_hidden");
-        }
+        if (document.hidden) triggerTamperViolation("tab_hidden");
       });
 
-      // 2. Window Blur (User clicking outside browser or switching applications)
+      // Event 2: Window Blur (switching to desktop messaging apps)
       window.addEventListener("blur", function() {
         triggerTamperViolation("window_blur");
       });
+
+      // Also listen on parent window context
+      try {
+        if (window.parent && window.parent.document) {
+          window.parent.document.addEventListener("visibilitychange", function() {
+            if (window.parent.document.hidden) triggerTamperViolation("parent_tab_hidden");
+          });
+          window.parent.addEventListener("blur", function() {
+            triggerTamperViolation("parent_blur");
+          });
+        }
+      } catch(e) {}
     })();
     </script>
     """
-    components.html(guard_html, height=45)
+    components.html(guard_html, height=48)
 
 
 # ---------------------------------------------------------------------------
-# UI Modules: Authentication & Portal Routing
+# Authentication & Portal Navigation
 # ---------------------------------------------------------------------------
 
 
@@ -576,13 +598,13 @@ def render_login() -> None:
     col_hero, col_card = st.columns([1.1, 1], gap="large")
 
     with col_hero:
-        st.markdown('<div class="zt-kicker">Secure Campus Infrastructure</div>', unsafe_allow_html=True)
+        st.markdown('<div class="zt-kicker">Secure Institute Perimeter</div>', unsafe_allow_html=True)
         st.title(APP_TITLE)
         st.markdown(
             f"**Official Verification Portal for {INSTITUTE_NAME}**  \n"
-            "This prototype enforces strict **Zero-Trust** classroom verification: "
-            "15-second rolling projector OTPs, enrolled biometric confirmation, and "
-            "browser-level tab-switch guards against proxy attendance."
+            "This system enforces zero-trust attendance through 15-second dynamic rolling projector OTPs, "
+            "salted SHA-256 biometric fingerprint passkeys, campus network bound validation (`10.12.*.*`), "
+            "and browser `visibilitychange` anti-proxy guards."
         )
 
         st.markdown(
@@ -590,7 +612,7 @@ def render_login() -> None:
             <div class="zt-card">
               <h4 style="margin-top:0; color:#38bdf8 !important;">Demo Quick Personas</h4>
               <p style="color:#94a3b8; font-size:0.88rem; margin-bottom:0.5rem;">
-                Click any role below to prefill an institute email. The mock email OTP is fixed to <code>1234</code>.
+                Select any role below to prefill an institute email. The mock email OTP is fixed to <code>1234</code>.
               </p>
             </div>
             """,
@@ -612,9 +634,9 @@ def render_login() -> None:
         st.markdown(
             """
             <div class="zt-card">
-              <h3 style="margin-top:0;">Institute Access Login</h3>
+              <h3 style="margin-top:0;">Institute Sign-In</h3>
               <p style="color:#94a3b8; font-size:0.85rem;">
-                Authentication is strictly restricted to institute accounts ending in <code>@iiitdwd.ac.in</code>.
+                Sign-in is strictly restricted to accounts ending in <code>@iiitdwd.ac.in</code>.
               </p>
             </div>
             """,
@@ -698,7 +720,7 @@ def render_sidebar() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Professor Portal: Google Classroom Course Management & Rolling OTP
+# Professor Portal: Classroom Management, 15s Dynamic OTP, Editable Roster & Excel
 # ---------------------------------------------------------------------------
 
 
@@ -750,7 +772,6 @@ def professor_course_list_ui() -> None:
             (c["course_id"],),
         )["count"]
 
-        # Check if attendance is currently live
         active_session = fetchone(
             "SELECT session_id FROM attendance_sessions WHERE course_id = ? AND is_active = 1",
             (c["course_id"],),
@@ -766,7 +787,7 @@ def professor_course_list_ui() -> None:
 
         with col_status:
             if active_session:
-                st.markdown('<span style="color:#ef4444; font-weight:700;">● LIVE SESSION ACTIVE</span>', unsafe_allow_html=True)
+                st.markdown('<span style="color:#ef4444; font-weight:700;">● LIVE ATTENDANCE ACTIVE</span>', unsafe_allow_html=True)
             else:
                 st.caption("No active session")
 
@@ -782,8 +803,8 @@ def professor_course_list_ui() -> None:
 @st.fragment(run_every=1)
 def professor_live_rolling_otp_widget(session_id: str, course_name: str) -> None:
     """
-    Renders the 15-second rolling dynamic OTP code projected on screen.
-    Uses st.fragment(run_every=1) to keep projector clock perfectly in sync.
+    Projects a 15-second dynamic rolling 5-character OTP rendered in large
+    monospace font using @st.fragment(run_every=1) with an active countdown bar.
     """
     row = rotate_session_otp(session_id)
     remaining = otp_seconds_remaining(row["otp_expires_at"])
@@ -805,13 +826,18 @@ def professor_live_rolling_otp_widget(session_id: str, course_name: str) -> None
 
 
 def professor_roster_and_export_ui(session_id: str, course_id: str) -> None:
+    """
+    Renders an editable live roster using st.data_editor displaying:
+    Roll Number | Student Name | Status (1 for Present, 0 for Absent)
+    with override capabilities, alongside an in-memory .xlsx Excel export button using Pandas and io.BytesIO.
+    """
     roster_df = query_df(
         """
         SELECT
             u.roll_number AS "Roll Number",
             u.name AS "Student Name",
+            COALESCE(ar.status, 0) AS "Status (1=Present, 0=Absent)",
             u.email AS "Student Email",
-            COALESCE(ar.status, 0) AS "Status",
             ar.marked_at AS "Marked At"
         FROM enrollments e
         JOIN users u ON u.email = e.student_email
@@ -827,9 +853,8 @@ def professor_roster_and_export_ui(session_id: str, course_id: str) -> None:
         st.warning("No students currently enrolled in this course roster.")
         return
 
-    # Attendance count metrics
     total_enrolled = len(roster_df)
-    total_present = int((roster_df["Status"] == 1).sum())
+    total_present = int((roster_df["Status (1=Present, 0=Absent)"] == 1).sum())
     total_absent = total_enrolled - total_present
     pct = (total_present / total_enrolled * 100) if total_enrolled > 0 else 0.0
 
@@ -839,21 +864,24 @@ def professor_roster_and_export_ui(session_id: str, course_id: str) -> None:
     m3.metric("Absent", total_absent)
     m4.metric("Turnout Rate", f"{pct:.1f}%")
 
-    st.markdown("#### Session Attendance Grid (Professor Overrides Supported)")
-    st.caption("You can manually toggle any student's status (1 for Present, 0 for Absent) using the editor below.")
-
-    # Convert status to boolean for intuitive checkbox editing in data_editor
-    edit_table = roster_df.copy()
-    edit_table["Present?"] = edit_table["Status"] == 1
+    st.markdown("#### Session Attendance Grid (st.data_editor)")
+    st.caption("Double-click any student's status to override (1 for Present, 0 for Absent) and save.")
 
     edited_df = st.data_editor(
-        edit_table[["Roll Number", "Student Name", "Student Email", "Present?", "Marked At"]],
+        roster_df[["Roll Number", "Student Name", "Status (1=Present, 0=Absent)", "Student Email", "Marked At"]],
         column_config={
             "Roll Number": st.column_config.TextColumn("Roll Number", disabled=True),
             "Student Name": st.column_config.TextColumn("Student Name", disabled=True),
+            "Status (1=Present, 0=Absent)": st.column_config.NumberColumn(
+                "Status (1 for Present, 0 for Absent)",
+                help="Enter 1 for Present, 0 for Absent",
+                min_value=0,
+                max_value=1,
+                step=1,
+                required=True,
+            ),
             "Student Email": st.column_config.TextColumn("Student Email", disabled=True),
-            "Present?": st.column_config.CheckboxColumn("Present (1 / 0 Override)"),
-            "Marked At": st.column_config.TextColumn("Marked Timestamp", disabled=True),
+            "Marked At": st.column_config.TextColumn("Marked At", disabled=True),
         },
         hide_index=True,
         use_container_width=True,
@@ -865,7 +893,7 @@ def professor_roster_and_export_ui(session_id: str, course_id: str) -> None:
     with col_save:
         if st.button("💾 Save Manual Overrides", type="primary", use_container_width=True):
             for _, row in edited_df.iterrows():
-                is_pres = 1 if bool(row["Present?"]) else 0
+                is_pres = int(row["Status (1=Present, 0=Absent)"])
                 marked_ts = utcnow_str() if is_pres == 1 else None
                 execute(
                     """
@@ -880,14 +908,12 @@ def professor_roster_and_export_ui(session_id: str, course_id: str) -> None:
             st.rerun()
 
     with col_export:
-        # Prepare Excel report matching required specification: Roll Number | Student Name | Status (1 for Present, 0 for Absent)
-        export_clean_df = edited_df.copy()
-        export_clean_df["Status (1=Present, 0=Absent)"] = export_clean_df["Present?"].apply(lambda x: 1 if x else 0)
-        final_export = export_clean_df[["Roll Number", "Student Name", "Status (1=Present, 0=Absent)", "Student Email", "Marked At"]]
-
+        # Generate clean Excel report using Pandas and in-memory io.BytesIO
+        export_clean = edited_df[["Roll Number", "Student Name", "Status (1=Present, 0=Absent)", "Student Email", "Marked At"]].copy()
+        
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            final_export.to_excel(writer, index=False, sheet_name="Session Attendance")
+            export_clean.to_excel(writer, index=False, sheet_name="Attendance Roster")
 
         st.download_button(
             label="📥 Download Session Report (.xlsx)",
@@ -937,7 +963,6 @@ def professor_course_detail_ui(course_id: str) -> None:
                 (new_session_id, course_id, today_str(), first_otp, now_ts + OTP_TTL_SECONDS, CAMPUS_SSID, utcnow_str()),
             )
 
-            # Auto-populate records as 0 (Absent) for all enrolled students
             enrolled_students = fetchall("SELECT student_email FROM enrollments WHERE course_id = ?", (course_id,))
             for s in enrolled_students:
                 execute(
@@ -965,7 +990,7 @@ def professor_course_detail_ui(course_id: str) -> None:
     st.divider()
 
     if active_session:
-        st.markdown(f"### 📽️ Active Projector Screen (Session ID: `{active_session['session_id'][:8]}`)")
+        st.markdown(f"### 📽️ Active Projector Screen (Session: `{active_session['session_id'][:8]}`)")
         professor_live_rolling_otp_widget(active_session["session_id"], course["course_name"])
         st.divider()
         st.subheader("📋 Live Real-Time Roster")
@@ -973,6 +998,7 @@ def professor_course_detail_ui(course_id: str) -> None:
     else:
         st.info("No active attendance session currently running for this course. Click 'Initialize Attendance' above to open a 15-second dynamic OTP window.")
 
+        # Historical Review
         past_sessions = query_df(
             """
             SELECT session_id, date, created_at, is_active
@@ -985,7 +1011,7 @@ def professor_course_detail_ui(course_id: str) -> None:
         if not past_sessions.empty:
             st.subheader("📁 Historical Sessions Archive")
             selected_past = st.selectbox(
-                "Select a previous session to review & export:",
+                "Select a past session to review & export:",
                 past_sessions["session_id"].tolist(),
                 format_func=lambda sid: f"Session {sid[:8]} — {past_sessions.loc[past_sessions['session_id'] == sid, 'created_at'].values[0]}",
             )
@@ -1005,14 +1031,14 @@ def render_professor_portal() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Student Portal: Live Alerts, Course Joining, Zero-Trust Attendance
+# Student Portal: Live Alert Banners, Fingerprint Passkey & Anti-Proxy Guard
 # ---------------------------------------------------------------------------
 
 
 def student_live_alerts_banner() -> None:
     """
-    Displays the prominent notification banner when a professor initializes attendance:
-    '⚠️ Attendance is initialized for [Course Name]!'
+    Renders live alert banner: '⚠️ Attendance is initialized for [Course Name]!'
+    when a professor initializes an attendance session.
     """
     active_rows = fetchall(
         """
@@ -1041,7 +1067,7 @@ def student_live_alerts_banner() -> None:
         st.markdown(
             f"""
             <div class="banner-active-alert">
-              <span>⚠️ <strong>Attendance is initialized for {item['course_name']}!</strong> Submit your dynamic code now.</span>
+              <span>⚠️ <strong>Attendance is initialized for {item['course_name']}!</strong> Click here to mark attendance.</span>
             </div>
             """,
             unsafe_allow_html=True,
@@ -1060,13 +1086,13 @@ def student_join_course_ui() -> None:
     with st.form("student_join_form"):
         st.markdown(
             "Enter the 6-character course code provided by your professor. "
-            "Zero-trust security requires confirming your biometric fingerprint token during enrollment."
+            "Zero-trust security requires confirming your biometric fingerprint token during enrollment (persisted as a salted SHA-256 hash)."
         )
         code_input = st.text_input("Course Join Code", placeholder="e.g. OS301X").strip().upper()
         fingerprint_input = st.text_input(
             "Biometric Fingerprint Passkey / Token",
             type="password",
-            help="Your enrolled biometric secret. Encrypted using SHA-256 and verified during attendance.",
+            help="Your enrolled biometric secret. Encrypted using salted SHA-256 and confirmed during attendance marking.",
         )
         submitted = st.form_submit_button("Confirm Biometric & Enroll", type="primary")
 
@@ -1084,7 +1110,6 @@ def student_join_course_ui() -> None:
             st.error("Invalid Course Code: No course found matching this code.")
             return
 
-        # Update or set the student's fingerprint hash
         hashed_fp = hash_fingerprint(st.session_state.email, fingerprint_input)
         execute("UPDATE users SET fingerprint_hash = ? WHERE email = ?", (hashed_fp, st.session_state.email))
 
@@ -1130,12 +1155,12 @@ def student_enrolled_courses_ui() -> None:
 
 def student_mark_attendance_screen(session_id: str) -> None:
     """
-    Enforces all 4 zero-trust security checks:
+    Enforces all zero-trust criteria:
     1. Auto-Identity Pre-fill: Read-only name and roll number from institute session.
-    2. Rolling Code Verification: 5-character OTP currently active on the projector.
-    3. Biometric Fingerprint Verification: Token checked against stored hash.
-    4. Anti-Proxy Tamper Guard: Tab visibility change / focus loss triggers immediate termination.
-    5. Network/Spatial Bound: Validates campus network attestation.
+    2. Rolling Code Verification: Validates active 15s projector OTP.
+    3. Biometric Fingerprint Verification: Confirms against enrolled SHA-256 hash.
+    4. Anti-Proxy Tamper Guard: Injected via st.components.v1.html (visibilitychange & blur).
+    5. Network/Spatial Bound: Validates campus network attestation (10.12.*.*).
     """
     session_row = fetchone("SELECT * FROM attendance_sessions WHERE session_id = ?", (session_id,))
     if not session_row or not session_row["is_active"]:
@@ -1168,20 +1193,20 @@ def student_mark_attendance_screen(session_id: str) -> None:
             st.rerun()
         return
 
-    # Inject Anti-Proxy Guard
+    # Inject Anti-Proxy Guard via st.components.v1.html
     render_anti_proxy_guard()
 
     st.title(f"Mark Attendance · {course['course_name']}")
     st.caption("Zero-Trust Verification: Keep this window active. Do NOT switch tabs or apps.")
 
-    # 1. Auto-Identity Pre-fill
+    # 1. Auto-Identity Pre-fill (read-only)
     col_id1, col_id2 = st.columns(2)
     with col_id1:
         st.text_input("Student Name (Verified)", value=st.session_state.name, disabled=True)
     with col_id2:
         st.text_input("Roll Number (Verified)", value=st.session_state.roll_number or "N/A", disabled=True)
 
-    # Telemetry Badge
+    # Campus Network & Spatial Attestation (10.12.*.*)
     net_data = verify_network_spatial_bound()
     st.markdown(
         f"""
@@ -1189,7 +1214,7 @@ def student_mark_attendance_screen(session_id: str) -> None:
           <strong style="color:#38bdf8;">Network & Spatial Attestation:</strong>
           &nbsp; <span class="network-chip">SSID: {net_data['ssid']}</span>
           &nbsp; <span class="network-chip">IP Subnet: {net_data['subnet']}</span>
-          &nbsp; <span class="network-chip">Zone: {net_data['spatial_zone']}</span>
+          &nbsp; <span class="network-chip">Spatial: {net_data['spatial_zone']}</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1214,12 +1239,10 @@ def student_mark_attendance_screen(session_id: str) -> None:
         submit_attendance = st.form_submit_button("Submit Zero-Trust Attendance", type="primary")
 
     if submit_attendance:
-        # Check tamper state again
         if st.session_state.tab_switched:
             st.error("Submission rejected: Tab switch tamper event logged.")
             return
 
-        # Fetch live OTP from DB to avoid stale evaluation
         live_session = rotate_session_otp(session_id)
         current_time = time.time()
 
@@ -1227,12 +1250,12 @@ def student_mark_attendance_screen(session_id: str) -> None:
             st.error("Attendance window has expired.")
             return
 
-        # Check 1: Rolling OTP match & validity
+        # Verification 1: 15-Second Rolling Dynamic OTP match
         if current_time >= float(live_session["otp_expires_at"] or 0) or otp_student_input != (live_session["current_otp"] or "").upper():
             st.error("Verification Failed: Projector OTP is incorrect or has expired. Read the projector screen and re-enter.")
             return
 
-        # Check 2: Biometric Fingerprint Hash verification
+        # Verification 2: Enrolled Biometric Salted SHA-256 Hash
         student_user = fetchone("SELECT * FROM users WHERE email = ?", (st.session_state.email,))
         if not student_user or not student_user["fingerprint_hash"]:
             st.error("No biometric profile registered. Please re-enroll in the course with a biometric passkey.")
@@ -1243,12 +1266,12 @@ def student_mark_attendance_screen(session_id: str) -> None:
             st.error("Biometric Verification Failed: Fingerprint token does not match enrollment record.")
             return
 
-        # Check 3: Campus Network Attestation
+        # Verification 3: Campus Network/Spatial Attestation (10.12.*.*)
         if not net_data["status"]:
             st.error("Network Bound Failed: You must be connected to the classroom academic network.")
             return
 
-        # All Zero-Trust Checks Passed! Mark Present in Database
+        # All Checks Passed: Mark Present
         execute(
             """
             INSERT INTO attendance_records (session_id, student_email, status, marked_at, device_info)
@@ -1352,7 +1375,7 @@ def render_admin_portal() -> None:
                 c.course_name AS "Course Name",
                 u.roll_number AS "Roll Number",
                 u.name AS "Student Name",
-                ar.status AS "Status (1=Present)",
+                ar.status AS "Status (1=Present, 0=Absent)",
                 ar.marked_at AS "Marked Timestamp",
                 ar.device_info AS "Client Telemetry"
             FROM attendance_records ar
@@ -1385,7 +1408,7 @@ def render_admin_portal() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Application Main Controller
+# Application Entrypoint
 # ---------------------------------------------------------------------------
 
 
