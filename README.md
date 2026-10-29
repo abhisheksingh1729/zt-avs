@@ -62,6 +62,8 @@ pip install -r requirements.txt
 
 ### 3. Run the Streamlit Application
 ```bash
+python -m streamlit run app.py
+# or
 streamlit run app.py
 ```
 The app will launch at `http://localhost:8501`. SQLite database (`attendance.db`) will auto-initialize on first run with seeded demo personas and courses.
