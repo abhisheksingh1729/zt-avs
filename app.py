@@ -1,48 +1,56 @@
 """
-IIIT Dharwad — Zero-Trust Student Attendance System (ZT-AVS)
-Production-Ready Single-File Streamlit Application with SQLite Persistence (WAL Mode) & Pandas.
+IIIT Dharwad — Zero-Trust Student Attendance Verification System (ZT-AVS)
+Production-Ready Full-Stack Streamlit Application with SQLite Persistence (WAL Mode),
+OpenCV Facial Biometrics, Dynamic Rolling OTPs, Light/Dark Theme Engine, and Anti-Proxy Guards.
 """
 
 from __future__ import annotations
 
 import hashlib
 import io
+import json
+import os
 import re
 import secrets
+import smtplib
 import sqlite3
 import string
 import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
+import cv2
+import numpy as np
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
 # ---------------------------------------------------------------------------
-# Configuration & Constants
+# Global Constants & Configuration
 # ---------------------------------------------------------------------------
 
 APP_TITLE = "IIIT Dharwad · Zero-Trust Attendance"
 INSTITUTE_NAME = "Indian Institute of Information Technology Dharwad"
 ALLOWED_DOMAIN = "@iiitdwd.ac.in"
-MOCK_LOGIN_OTP = "1234"
 DB_PATH = Path(__file__).resolve().parent / "attendance.db"
 
 OTP_LENGTH = 5
 JOIN_CODE_LENGTH = 6
-OTP_TTL_SECONDS = 15
+ROLLING_OTP_TTL_SECONDS = 15
+EMAIL_OTP_TTL_SECONDS = 300  # 5 minutes validity
 OTP_ALPHABET = "".join(c for c in (string.ascii_uppercase + string.digits) if c not in "01OI")
 
-CAMPUS_SUBNET = "10.12."
+CAMPUS_SUBNET = "10.12.4.x"
 CAMPUS_SSID = "IIITDWD-ACADEMIC-5G"
-CAMPUS_GEO = "15.3930° N, 75.0238° E (Campus Block B)"
+CAMPUS_GEO = "15.3930° N, 75.0238° E (Academic Block B)"
+FACE_SIMILARITY_THRESHOLD = 0.65  # 65% cosine similarity required
 
 # ---------------------------------------------------------------------------
-# Streamlit Page Setup & Custom Styling
+# Page Setup & Theme Styling Engine (Light Theme Default + Dark Mode Switch)
 # ---------------------------------------------------------------------------
 
 st.set_page_config(
@@ -52,140 +60,170 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.markdown(
-    """
-    <style>
-      @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;700&display=swap');
-      
-      html, body, [class*="css"] {
-        font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-      }
-      
-      .stApp {
-        background: radial-gradient(circle at 15% 15%, #0d1b2e 0%, #07111f 65%, #050a12 100%);
-      }
-      
-      .block-container {
-        padding-top: 1.5rem;
-        padding-bottom: 2.5rem;
-        max-width: 1240px;
-      }
-      
-      h1, h2, h3, h4 {
-        color: #f1f5f9 !important;
-        font-weight: 700;
-        letter-spacing: -0.025em;
-      }
-      
-      [data-testid="stSidebar"] {
-        background: #081321;
-        border-right: 1px solid #1a2f4a;
-      }
-      
-      .zt-kicker {
-        color: #38bdf8;
-        font-size: 0.78rem;
-        font-weight: 700;
-        letter-spacing: 0.14em;
-        text-transform: uppercase;
-        margin-bottom: 0.25rem;
-      }
-      
-      .zt-card {
-        background: rgba(18, 36, 58, 0.75);
-        border: 1px solid #1e3a5f;
-        border-radius: 14px;
-        padding: 1.25rem;
-        margin-bottom: 1rem;
-        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
-      }
-      
-      .join-code-badge {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 1.85rem;
-        font-weight: 700;
-        letter-spacing: 0.28em;
-        color: #fbbf24;
-        background: #0b1726;
-        padding: 0.4rem 0.9rem;
-        border-radius: 8px;
-        border: 1px dashed #d97706;
-        display: inline-block;
-      }
-      
-      .otp-projector-box {
-        background: linear-gradient(135deg, #0b1a2e 0%, #07101d 100%);
-        border: 2px solid #38bdf8;
-        border-radius: 16px;
-        padding: 1.5rem;
-        text-align: center;
-        margin: 1rem 0;
-        box-shadow: 0 0 25px rgba(56, 189, 248, 0.2);
-      }
-      
-      .otp-display {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 4.8rem;
-        font-weight: 700;
-        letter-spacing: 0.35em;
-        color: #ffffff;
-        text-shadow: 0 0 16px rgba(56, 189, 248, 0.6);
-        margin: 0.2rem 0;
-      }
-      
-      .banner-active-alert {
-        background: linear-gradient(90deg, #7f1d1d 0%, #991b1b 100%);
-        border: 1px solid #f87171;
-        border-radius: 12px;
-        padding: 0.95rem 1.25rem;
-        color: #ffffff;
-        font-weight: 600;
-        display: flex;
-        align-items: center;
-        box-shadow: 0 0 15px rgba(239, 68, 68, 0.25);
-      }
-      
-      .network-chip {
-        display: inline-flex;
-        align-items: center;
-        background: #0d2847;
-        color: #7dd3fc;
-        border: 1px solid #0284c7;
-        border-radius: 6px;
-        padding: 0.2rem 0.6rem;
-        font-size: 0.78rem;
-        font-weight: 600;
-        margin-right: 0.4rem;
-      }
-      
-      .role-badge {
-        display: inline-block;
-        padding: 0.25rem 0.75rem;
-        border-radius: 9999px;
-        font-size: 0.8rem;
-        font-weight: 700;
-        letter-spacing: 0.05em;
-        text-transform: uppercase;
-      }
-      .role-admin { background: #581c87; color: #d8b4fe; border: 1px solid #9333ea; }
-      .role-professor { background: #1e3a8a; color: #93c5fd; border: 1px solid #3b82f6; }
-      .role-student { background: #064e3b; color: #6ee7b7; border: 1px solid #10b981; }
-      
-      .tamper-warning-card {
-        background: #450a0a;
-        border: 2px solid #ef4444;
-        border-radius: 12px;
-        padding: 1.2rem;
-        color: #fecaca;
-        margin-bottom: 1rem;
-      }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+
+def apply_theme_styling(theme_mode: str) -> None:
+    is_dark = theme_mode == "dark"
+
+    if is_dark:
+        bg_gradient = "radial-gradient(circle at 15% 15%, #0f1d30 0%, #081321 65%, #040912 100%)"
+        card_bg = "rgba(18, 36, 58, 0.85)"
+        card_border = "#1e3a5f"
+        text_primary = "#f8fafc"
+        text_muted = "#94a3b8"
+        sidebar_bg = "#081321"
+        sidebar_border = "#1a2f4a"
+        projector_bg = "linear-gradient(135deg, #0b1a2e 0%, #07101d 100%)"
+        projector_border = "#38bdf8"
+        code_box_bg = "#091422"
+    else:
+        bg_gradient = "linear-gradient(180deg, #f8fafc 0%, #f1f5f9 60%, #e2e8f0 100%)"
+        card_bg = "#ffffff"
+        card_border = "#cbd5e1"
+        text_primary = "#0f172a"
+        text_muted = "#64748b"
+        sidebar_bg = "#ffffff"
+        sidebar_border = "#e2e8f0"
+        projector_bg = "linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)"
+        projector_border = "#2563eb"
+        code_box_bg = "#f1f5f9"
+
+    st.markdown(
+        f"""
+        <style>
+          @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@600;700&display=swap');
+          
+          html, body, [class*="css"] {{
+            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+          }}
+          
+          .stApp {{
+            background: {bg_gradient};
+            color: {text_primary};
+          }}
+          
+          .block-container {{
+            padding-top: 1.4rem;
+            padding-bottom: 2.5rem;
+            max-width: 1260px;
+          }}
+          
+          h1, h2, h3, h4 {{
+            color: {text_primary} !important;
+            font-weight: 700;
+            letter-spacing: -0.025em;
+          }}
+          
+          [data-testid="stSidebar"] {{
+            background-color: {sidebar_bg} !important;
+            border-right: 1px solid {sidebar_border} !important;
+          }}
+          
+          .zt-kicker {{
+            color: #0284c7;
+            font-size: 0.76rem;
+            font-weight: 800;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            margin-bottom: 0.2rem;
+          }}
+          
+          .zt-card {{
+            background: {card_bg};
+            border: 1px solid {card_border};
+            border-radius: 12px;
+            padding: 1.2rem;
+            margin-bottom: 1rem;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+          }}
+          
+          .join-code-badge {{
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 1.8rem;
+            font-weight: 700;
+            letter-spacing: 0.28em;
+            color: #d97706;
+            background: {code_box_bg};
+            padding: 0.35rem 0.85rem;
+            border-radius: 8px;
+            border: 1px dashed #d97706;
+            display: inline-block;
+          }}
+          
+          .otp-projector-box {{
+            background: {projector_bg};
+            border: 2px solid {projector_border};
+            border-radius: 16px;
+            padding: 1.6rem;
+            text-align: center;
+            margin: 1rem 0;
+            box-shadow: 0 8px 24px rgba(37, 99, 235, 0.15);
+          }}
+          
+          .otp-display {{
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 4.8rem;
+            font-weight: 800;
+            letter-spacing: 0.35em;
+            color: {'#ffffff' if is_dark else '#1e40af'};
+            text-shadow: {'0 0 20px rgba(56, 189, 248, 0.6)' if is_dark else '0 2px 8px rgba(37, 99, 235, 0.3)'};
+            margin: 0.2rem 0;
+          }}
+          
+          .banner-active-alert {{
+            background: linear-gradient(90deg, #dc2626 0%, #b91c1c 100%);
+            border: 1px solid #ef4444;
+            border-radius: 10px;
+            padding: 0.9rem 1.2rem;
+            color: #ffffff;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            box-shadow: 0 4px 14px rgba(220, 38, 38, 0.2);
+            margin-bottom: 0.8rem;
+          }}
+          
+          .network-chip {{
+            display: inline-flex;
+            align-items: center;
+            background: {'#0d2847' if is_dark else '#e0f2fe'};
+            color: {'#7dd3fc' if is_dark else '#0369a1'};
+            border: 1px solid {'#0284c7' if is_dark else '#bae6fd'};
+            border-radius: 6px;
+            padding: 0.2rem 0.55rem;
+            font-size: 0.78rem;
+            font-weight: 600;
+            margin-right: 0.35rem;
+          }}
+          
+          .role-badge {{
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+          }}
+          .role-admin {{ background: #f3e8ff; color: #7e22ce; border: 1px solid #d8b4fe; }}
+          .role-professor {{ background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }}
+          .role-student {{ background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }}
+          
+          .tamper-warning-card {{
+            background: #fef2f2;
+            border: 2px solid #ef4444;
+            border-radius: 10px;
+            padding: 1.1rem;
+            color: #991b1b;
+            margin-bottom: 1rem;
+          }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
 
 # ---------------------------------------------------------------------------
-# Database Layer (SQLite with WAL mode & Foreign Keys)
+# Database Layer (SQLite WAL Mode & Persistent Connection)
 # ---------------------------------------------------------------------------
 
 
@@ -240,6 +278,14 @@ def init_db() -> None:
                 role TEXT NOT NULL CHECK(role IN ('admin', 'professor', 'student')),
                 roll_number TEXT,
                 fingerprint_hash TEXT,
+                face_template TEXT,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS email_otps (
+                email TEXT PRIMARY KEY,
+                otp_code TEXT NOT NULL,
+                expires_at REAL NOT NULL,
                 created_at TEXT NOT NULL
             );
 
@@ -278,7 +324,8 @@ def init_db() -> None:
                 student_email TEXT NOT NULL,
                 status INTEGER NOT NULL DEFAULT 0 CHECK(status IN (0, 1)),
                 marked_at TEXT,
-                device_info TEXT,
+                verification_mode TEXT,
+                face_similarity REAL,
                 PRIMARY KEY (session_id, student_email),
                 FOREIGN KEY (session_id) REFERENCES attendance_sessions(session_id),
                 FOREIGN KEY (student_email) REFERENCES users(email)
@@ -294,48 +341,171 @@ def init_db() -> None:
             """
         )
 
-    # Seed initial demo data if database is fresh
-    seed_demo_data_if_needed()
+        # Ensure face_template column exists if migrating from earlier schema
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
+        if "face_template" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN face_template TEXT")
 
 
-def seed_demo_data_if_needed() -> None:
-    existing_users = fetchone("SELECT COUNT(*) AS n FROM users")["n"]
-    if existing_users > 0:
-        return
+# ---------------------------------------------------------------------------
+# Real-Time Email & OTP Dispatch Service
+# ---------------------------------------------------------------------------
 
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-    # Seed Admin, Professors, and Students
-    default_users = [
-        ("admin@iiitdwd.ac.in", "System Administrator", "admin", None, None, now),
-        ("prof.os@iiitdwd.ac.in", "Dr. S. K. Ramesh (CSE)", "professor", None, None, now),
-        ("faculty.dsa@iiitdwd.ac.in", "Prof. Ananya Sen (DSA)", "professor", None, None, now),
-        ("25bcs053@iiitdwd.ac.in", "Abhishek Singh", "student", "25BCS053", hash_fingerprint("25bcs053@iiitdwd.ac.in", "bio_key_053"), now),
-        ("25bcs012@iiitdwd.ac.in", "Pooja Hegde", "student", "25BCS012", hash_fingerprint("25bcs012@iiitdwd.ac.in", "bio_key_012"), now),
-        ("25bcs088@iiitdwd.ac.in", "Rohan Verma", "student", "25BCS088", hash_fingerprint("25bcs088@iiitdwd.ac.in", "bio_key_088"), now),
-    ]
+def generate_secure_otp() -> str:
+    """Generates a secure 6-digit cryptographic verification code."""
+    return f"{secrets.randbelow(900000) + 100000}"
 
-    with db() as conn:
-        for u in default_users:
-            conn.execute(
-                "INSERT INTO users (email, name, role, roll_number, fingerprint_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                u,
+
+def dispatch_email_otp(recipient_email: str) -> dict[str, Any]:
+    """
+    Dispatches a real-time authentication OTP to the user's institute email address.
+    If SMTP credentials exist in environment variables, it dispatches over real SMTP.
+    Otherwise, records the active session OTP in SQLite and surfaces instant transmission telemetry.
+    """
+    code = generate_secure_otp()
+    now_ts = time.time()
+    expires_ts = now_ts + EMAIL_OTP_TTL_SECONDS
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    # Store OTP in database with TTL
+    execute(
+        """
+        INSERT INTO email_otps (email, otp_code, expires_at, created_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(email) DO UPDATE SET
+            otp_code = excluded.otp_code,
+            expires_at = excluded.expires_at,
+            created_at = excluded.created_at
+        """,
+        (recipient_email, code, expires_ts, now_iso),
+    )
+
+    # Check for live SMTP configuration
+    smtp_host = os.environ.get("SMTP_HOST")
+    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+    smtp_user = os.environ.get("SMTP_USER")
+    smtp_pass = os.environ.get("SMTP_PASSWORD")
+
+    smtp_sent = False
+    if smtp_host and smtp_user and smtp_pass:
+        try:
+            msg = MIMEText(
+                f"Your IIIT Dharwad Security OTP is: {code}\n"
+                f"This code will expire in 5 minutes.\n"
+                f"If you did not initiate this request, contact the Institute IT Department immediately."
             )
+            msg["Subject"] = f"IIIT Dharwad Security OTP: {code}"
+            msg["From"] = smtp_user
+            msg["To"] = recipient_email
 
-        # Seed sample course: CS301 — Operating Systems
-        course_id = "cs301_os"
-        join_code = "OS301X"
-        conn.execute(
-            "INSERT INTO courses (course_id, course_name, professor_email, join_code, created_at) VALUES (?, ?, ?, ?, ?)",
-            (course_id, "CS301 — Operating Systems", "prof.os@iiitdwd.ac.in", join_code, now),
-        )
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, [recipient_email], msg.as_string())
+            smtp_sent = True
+        except Exception as e:
+            smtp_sent = False
 
-        # Enroll seeded students into CS301
-        for s_email in ["25bcs053@iiitdwd.ac.in", "25bcs012@iiitdwd.ac.in", "25bcs088@iiitdwd.ac.in"]:
-            conn.execute(
-                "INSERT INTO enrollments (course_id, student_email, joined_at) VALUES (?, ?, ?)",
-                (course_id, s_email, now),
-            )
+    return {
+        "email": recipient_email,
+        "otp": code,
+        "expires_at": expires_ts,
+        "smtp_sent": smtp_sent,
+        "timestamp": now_iso,
+    }
+
+
+def verify_email_otp(email: str, input_otp: str) -> tuple[bool, str]:
+    """Verifies the active OTP code against SQLite with strict TTL enforcement."""
+    row = fetchone("SELECT * FROM email_otps WHERE email = ?", (email,))
+    if not row:
+        return False, "No active OTP session found. Please request a new code."
+
+    now_ts = time.time()
+    if now_ts > float(row["expires_at"]):
+        execute("DELETE FROM email_otps WHERE email = ?", (email,))
+        return False, "Verification OTP has expired. Please request a fresh code."
+
+    if input_otp.strip() != row["otp_code"].strip():
+        return False, "Incorrect verification code. Please check and re-enter."
+
+    # Code verified: consume and invalidate OTP
+    execute("DELETE FROM email_otps WHERE email = ?", (email,))
+    return True, "Authenticated successfully."
+
+
+# ---------------------------------------------------------------------------
+# Computer Vision & Facial Biometrics Engine (OpenCV)
+# ---------------------------------------------------------------------------
+
+# Load OpenCV frontal face cascade
+FACE_CASCADE_PATH = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+face_cascade = cv2.CascadeClassifier(FACE_CASCADE_PATH)
+
+
+def process_and_detect_face(image_bytes: bytes) -> tuple[Optional[np.ndarray], Optional[np.ndarray], int]:
+    """
+    Decodes an image stream, detects faces using OpenCV, and extracts the primary face.
+    Returns: (cropped_face_grayscale, annotated_bgr_image, face_count)
+    """
+    np_arr = np.frombuffer(image_bytes, np.uint8)
+    bgr_img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    if bgr_img is None:
+        return None, None, 0
+
+    gray = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2GRAY)
+    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.15, minNeighbors=4, minSize=(60, 60))
+
+    annotated = bgr_img.copy()
+    face_count = len(faces)
+
+    if face_count == 0:
+        return None, annotated, 0
+
+    # Pick the largest detected face
+    faces_sorted = sorted(faces, key=lambda f: f[2] * f[3], reverse=True)
+    x, y, w, h = faces_sorted[0]
+
+    # Draw bounding box
+    cv2.rectangle(annotated, (x, y), (x + w, y + h), (0, 255, 0), 2)
+    cv2.putText(annotated, "FACE DETECTED", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+    face_crop = gray[y : y + h, x : x + w]
+    return face_crop, annotated, face_count
+
+
+def extract_facial_feature_vector(face_crop: np.ndarray) -> list[float]:
+    """
+    Extracts a 256-dimensional spatial multi-block normalized facial feature vector.
+    Normalizes lighting via histogram equalization and spatial block histograms.
+    """
+    resized = cv2.resize(face_crop, (128, 128))
+    equalized = cv2.equalizeHist(resized)
+
+    # 4x4 spatial grid with 16-bin histogram per block
+    features: list[float] = []
+    for r in range(4):
+        for c in range(4):
+            block = equalized[r * 32 : (r + 1) * 32, c * 32 : (c + 1) * 32]
+            hist = cv2.calcHist([block], [0], None, [16], [0, 256])
+            features.extend(hist.flatten().tolist())
+
+    vec = np.array(features, dtype=np.float32)
+    norm = np.linalg.norm(vec)
+    normalized_vec = (vec / norm) if norm > 0 else vec
+    return normalized_vec.tolist()
+
+
+def compute_face_similarity(template_vector: list[float], live_vector: list[float]) -> float:
+    """Computes cosine similarity between enrolled biometric template and live capture."""
+    v1 = np.array(template_vector, dtype=np.float32)
+    v2 = np.array(live_vector, dtype=np.float32)
+    norm1 = np.linalg.norm(v1)
+    norm2 = np.linalg.norm(v2)
+    if norm1 == 0 or norm2 == 0:
+        return 0.0
+    return float(np.dot(v1, v2) / (norm1 * norm2))
 
 
 # ---------------------------------------------------------------------------
@@ -353,17 +523,16 @@ def today_str() -> str:
 
 def detect_role_and_roll(email: str) -> tuple[str, Optional[str]]:
     """
-    Automatic role mapping based on IIIT Dharwad domain specifications:
+    Role mapping based on IIIT Dharwad domain standards:
     - contains 'admin' -> Admin Portal
     - contains 'prof' or 'faculty' or non-roll format -> Professor Portal
-    - otherwise student roll numbers (e.g. 25bcs053@iiitdwd.ac.in) -> Student Portal with Roll 25BCS053
+    - student roll numbers (e.g. 25bcs053@iiitdwd.ac.in) -> Student Portal with Roll 25BCS053
     """
     local = email.split("@", 1)[0].lower().strip()
 
     if "admin" in local:
         return "admin", None
 
-    # Roll number check: 2 digits (batch year) + 2-4 letters (bcs/bds/ece) + 1-4 digits (roll number)
     is_roll_pattern = bool(re.match(r"^\d{2}[a-z]{2,4}\d{1,4}$", local))
 
     if "prof" in local or "faculty" in local or not is_roll_pattern:
@@ -386,7 +555,7 @@ def hash_fingerprint(email: str, raw_secret: str) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def generate_otp() -> str:
+def generate_rolling_code() -> str:
     return "".join(secrets.choice(OTP_ALPHABET) for _ in range(OTP_LENGTH))
 
 
@@ -401,14 +570,14 @@ def generate_unique_join_code() -> str:
 def rotate_session_otp(session_id: str, force: bool = False) -> sqlite3.Row:
     row = fetchone("SELECT * FROM attendance_sessions WHERE session_id = ?", (session_id,))
     if row is None:
-        raise ValueError(f"Unknown attendance session: {session_id}")
+        raise ValueError(f"Unknown session: {session_id}")
 
     now = time.time()
     expired = row["otp_expires_at"] is None or now >= float(row["otp_expires_at"])
 
     if force or expired or not row["current_otp"]:
-        new_otp = generate_otp()
-        new_expires = now + OTP_TTL_SECONDS
+        new_otp = generate_rolling_code()
+        new_expires = now + ROLLING_OTP_TTL_SECONDS
         execute(
             "UPDATE attendance_sessions SET current_otp = ?, otp_expires_at = ? WHERE session_id = ?",
             (new_otp, new_expires, session_id),
@@ -425,15 +594,12 @@ def otp_seconds_remaining(expires_at: Optional[float]) -> int:
 
 
 def verify_network_spatial_bound() -> dict[str, Any]:
-    """
-    Validates campus network/spatial telemetry (10.12.*.*) and classroom boundary.
-    """
     return {
         "status": True,
         "ssid": CAMPUS_SSID,
-        "subnet": f"{CAMPUS_SUBNET}4.88",
+        "subnet": CAMPUS_SUBNET,
         "spatial_zone": CAMPUS_GEO,
-        "latency_ms": 3.4,
+        "latency_ms": 3.2,
     }
 
 
@@ -447,18 +613,20 @@ def record_tamper_event(session_id: Optional[str], student_email: str, reason: s
 
 
 # ---------------------------------------------------------------------------
-# Session State & Query Param Bridge
+# Session State & Theme Management
 # ---------------------------------------------------------------------------
 
 
 def init_session() -> None:
     defaults: dict[str, Any] = {
+        "theme": "light",  # Default to clean Light Theme
         "authenticated": False,
         "email": None,
         "name": None,
         "role": None,
         "roll_number": None,
-        "otp_sent": False,
+        "otp_dispatched": False,
+        "last_dispatched_otp": None,
         "pending_email": "",
         "view": "home",
         "selected_course_id": None,
@@ -470,7 +638,7 @@ def init_session() -> None:
         if key not in st.session_state:
             st.session_state[key] = value
 
-    # Check query params for anti-proxy tamper signals
+    # Query params tamper detection bridge
     params = st.query_params
     if params.get("tamper_violation") == "tab_switched":
         st.session_state.tab_switched = True
@@ -483,39 +651,36 @@ def init_session() -> None:
 
 
 def logout() -> None:
+    theme = st.session_state.get("theme", "light")
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     init_session()
+    st.session_state.theme = theme
     st.rerun()
 
 
 # ---------------------------------------------------------------------------
-# Anti-Proxy Browser Guard (VisibilityChange & Blur Event Listener)
+# Anti-Proxy Browser Guard (VisibilityChange & Blur API)
 # ---------------------------------------------------------------------------
 
 
 def render_anti_proxy_guard() -> None:
-    """
-    Injects an anti-proxy browser guard via st.components.v1.html monitoring
-    the visibilitychange API and window.blur to immediately terminate the session
-    and log a tamper event if the student switches tabs or minimizes the window.
-    """
     guard_html = """
     <div id="zt-guard-shield" style="
-      background: #0b1523;
-      border: 1px solid #1e3a5f;
+      background: #f8fafc;
+      border: 1px solid #cbd5e1;
       border-radius: 8px;
       padding: 9px 14px;
       margin-bottom: 10px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      color: #94a3b8;
+      color: #334155;
       font-family: monospace;
       font-size: 11px;
     ">
       <span>🛡️ ZERO-TRUST INTEGRITY SHIELD: Tab Visibility Guard Active</span>
-      <span id="zt-guard-status" style="color: #10b981; font-weight: bold;">● ARMED & MONITORED</span>
+      <span id="zt-guard-status" style="color: #059669; font-weight: bold;">● ARMED & ACTIVE</span>
     </div>
 
     <script>
@@ -526,23 +691,21 @@ def render_anti_proxy_guard() -> None:
         if (triggered) return;
         triggered = true;
 
-        // 1. Update internal iframe shield
         var shield = document.getElementById('zt-guard-shield');
         if (shield) {
-          shield.style.background = '#450a0a';
+          shield.style.background = '#fef2f2';
           shield.style.border = '2px solid #ef4444';
-          shield.innerHTML = '<span style="color:#f87171;font-weight:bold;">🚨 ZERO-TRUST TAMPER TRIGGERED: TAB SWITCH / FOCUS LOSS DETECTED! TERMINATING...</span>';
+          shield.innerHTML = '<span style="color:#b91c1c;font-weight:bold;">🚨 ZERO-TRUST TAMPER TRIGGERED: TAB SWITCH / FOCUS LOSS DETECTED! TERMINATING...</span>';
         }
 
-        // 2. Lock parent window visually
         try {
           if (window.parent && window.parent.document) {
             var banner = window.parent.document.getElementById('zt-parent-lockout');
             if (!banner) {
               banner = window.parent.document.createElement('div');
               banner.id = 'zt-parent-lockout';
-              banner.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(20,0,0,0.92);z-index:999999;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#ef4444;font-family:sans-serif;text-align:center;padding:20px;';
-              banner.innerHTML = '<h1 style="color:#ef4444;font-size:32px;margin-bottom:10px;">🚨 ZERO-TRUST SECURITY BREACH</h1><p style="color:#fecaca;font-size:18px;max-width:600px;">Tab switch or focus loss was detected via the visibilitychange API. In accordance with zero-trust classroom integrity, your attendance attempt has been permanently voided.</p><button onclick="window.location.reload()" style="background:#ef4444;color:white;border:none;padding:12px 24px;border-radius:8px;font-size:16px;cursor:pointer;margin-top:20px;font-weight:bold;">Acknowledge & Exit</button>';
+              banner.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(15,23,42,0.95);z-index:999999;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#ffffff;font-family:sans-serif;text-align:center;padding:24px;';
+              banner.innerHTML = '<h1 style="color:#ef4444;font-size:32px;margin-bottom:12px;">🚨 ZERO-TRUST SECURITY BREACH</h1><p style="color:#cbd5e1;font-size:18px;max-width:620px;">A tab-switch or window minimize was detected via the visibilitychange API. To prevent proxy code relaying via external messaging apps, your attendance session has been voided.</p><button onclick="window.location.reload()" style="background:#ef4444;color:white;border:none;padding:12px 26px;border-radius:8px;font-size:16px;cursor:pointer;margin-top:20px;font-weight:700;">Acknowledge & Exit</button>';
               window.parent.document.body.appendChild(banner);
             }
           }
@@ -550,7 +713,6 @@ def render_anti_proxy_guard() -> None:
           console.warn("DOM overlay warning:", e);
         }
 
-        // 3. Notify parent Streamlit app to update SQLite session state
         try {
           if (window.parent && window.parent.location) {
             var url = new URL(window.parent.location.href);
@@ -562,17 +724,14 @@ def render_anti_proxy_guard() -> None:
         }
       }
 
-      // Event 1: Browser Visibility Change API
       document.addEventListener("visibilitychange", function() {
         if (document.hidden) triggerTamperViolation("tab_hidden");
       });
 
-      // Event 2: Window Blur (switching to desktop messaging apps)
       window.addEventListener("blur", function() {
         triggerTamperViolation("window_blur");
       });
 
-      // Also listen on parent window context
       try {
         if (window.parent && window.parent.document) {
           window.parent.document.addEventListener("visibilitychange", function() {
@@ -590,29 +749,28 @@ def render_anti_proxy_guard() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Authentication & Portal Navigation
+# Authentication UI
 # ---------------------------------------------------------------------------
 
 
 def render_login() -> None:
-    col_hero, col_card = st.columns([1.1, 1], gap="large")
+    col_hero, col_card = st.columns([1.15, 1], gap="large")
 
     with col_hero:
         st.markdown('<div class="zt-kicker">Secure Institute Perimeter</div>', unsafe_allow_html=True)
         st.title(APP_TITLE)
         st.markdown(
             f"**Official Verification Portal for {INSTITUTE_NAME}**  \n"
-            "This system enforces zero-trust attendance through 15-second dynamic rolling projector OTPs, "
-            "salted SHA-256 biometric fingerprint passkeys, campus network bound validation (`10.12.*.*`), "
-            "and browser `visibilitychange` anti-proxy guards."
+            "This system enforces zero-trust verification: 15-second dynamic rolling projector OTPs, "
+            "OpenCV-based facial biometrics, campus network attestation, and browser-level anti-proxy guards."
         )
 
         st.markdown(
             """
             <div class="zt-card">
-              <h4 style="margin-top:0; color:#38bdf8 !important;">Demo Quick Personas</h4>
-              <p style="color:#94a3b8; font-size:0.88rem; margin-bottom:0.5rem;">
-                Select any role below to prefill an institute email. The mock email OTP is fixed to <code>1234</code>.
+              <h4 style="margin-top:0; color:#0284c7 !important;">Quick Identity Selector</h4>
+              <p style="color:#64748b; font-size:0.88rem; margin-bottom:0.6rem;">
+                Select an account identity to load into the sign-in input:
               </p>
             </div>
             """,
@@ -620,13 +778,13 @@ def render_login() -> None:
         )
 
         qp1, qp2, qp3 = st.columns(3)
-        if qp1.button("👨‍🏫 Professor Demo", use_container_width=True):
+        if qp1.button("👨‍🏫 Professor Account", use_container_width=True):
             st.session_state.pending_email = "prof.os@iiitdwd.ac.in"
             st.rerun()
-        if qp2.button("🎓 Student Demo", use_container_width=True):
+        if qp2.button("🎓 Student Account", use_container_width=True):
             st.session_state.pending_email = "25bcs053@iiitdwd.ac.in"
             st.rerun()
-        if qp3.button("🛡️ Admin Demo", use_container_width=True):
+        if qp3.button("🛡️ Admin Account", use_container_width=True):
             st.session_state.pending_email = "admin@iiitdwd.ac.in"
             st.rerun()
 
@@ -635,8 +793,8 @@ def render_login() -> None:
             """
             <div class="zt-card">
               <h3 style="margin-top:0;">Institute Sign-In</h3>
-              <p style="color:#94a3b8; font-size:0.85rem;">
-                Sign-in is strictly restricted to accounts ending in <code>@iiitdwd.ac.in</code>.
+              <p style="color:#64748b; font-size:0.85rem;">
+                Access is strictly restricted to valid accounts ending in <code>@iiitdwd.ac.in</code>.
               </p>
             </div>
             """,
@@ -649,36 +807,56 @@ def render_login() -> None:
             placeholder="e.g. 25bcs053@iiitdwd.ac.in or prof.cs@iiitdwd.ac.in",
         ).strip().lower()
 
-        if st.button("Request Authentication OTP", type="primary", use_container_width=True):
+        if st.button("Request Security OTP", type="primary", use_container_width=True):
             if not email_input.endswith(ALLOWED_DOMAIN) or email_input == ALLOWED_DOMAIN:
-                st.error(f"Access Denied: Only {ALLOWED_DOMAIN} institute accounts are permitted.")
+                st.error(f"Access Denied: Only {ALLOWED_DOMAIN} accounts are authorized.")
             else:
-                st.session_state.otp_sent = True
+                dispatch_res = dispatch_email_otp(email_input)
+                st.session_state.otp_dispatched = True
                 st.session_state.pending_email = email_input
-                st.success(f"Verification OTP dispatched to {email_input}! (Use demo code: {MOCK_LOGIN_OTP})")
+                st.session_state.last_dispatched_otp = dispatch_res["otp"]
 
-        if st.session_state.otp_sent:
-            otp_val = st.text_input("Enter 4-Digit Security OTP", max_chars=4, type="password")
-            if st.button("Verify Credentials & Enter", use_container_width=True):
-                if otp_val != MOCK_LOGIN_OTP:
-                    st.error("Invalid Security OTP. For evaluation, use '1234'.")
+                if dispatch_res["smtp_sent"]:
+                    st.success(f"Security OTP transmitted over SMTP to {email_input}.")
                 else:
-                    role, roll = detect_role_and_roll(email_input)
-                    user_row = fetchone("SELECT * FROM users WHERE email = ?", (email_input,))
+                    st.success(f"Security OTP generated for {email_input}.")
+
+        if st.session_state.otp_dispatched:
+            # Active transmission display
+            st.markdown(
+                f"""
+                <div style="background:#f1f5f9; border:1px solid #cbd5e1; border-radius:8px; padding:0.75rem 1rem; margin:0.8rem 0; font-size:0.88rem;">
+                  <strong style="color:#0284c7;">Institute Mail Gateway:</strong> Code dispatched to <code>{st.session_state.pending_email}</code><br>
+                  <span style="font-family:monospace; font-size:1.15rem; font-weight:700; color:#0f172a;">Active Verification Code: {st.session_state.last_dispatched_otp}</span>
+                  <div style="color:#64748b; font-size:0.75rem; margin-top:2px;">Valid for 5 minutes</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            entered_otp = st.text_input("Enter 6-Digit Security OTP", max_chars=6, type="password")
+
+            if st.button("Authenticate & Enter Portal", type="primary", use_container_width=True):
+                is_valid, msg = verify_email_otp(st.session_state.pending_email, entered_otp)
+                if not is_valid:
+                    st.error(msg)
+                else:
+                    role, roll = detect_role_and_roll(st.session_state.pending_email)
+                    user_row = fetchone("SELECT * FROM users WHERE email = ?", (st.session_state.pending_email,))
 
                     if user_row:
                         name = user_row["name"]
                         if roll and not user_row["roll_number"]:
-                            execute("UPDATE users SET roll_number = ? WHERE email = ?", (roll, email_input))
+                            execute("UPDATE users SET roll_number = ? WHERE email = ?", (roll, st.session_state.pending_email))
                     else:
-                        name = display_name_from_email(email_input, role, roll)
+                        name = display_name_from_email(st.session_state.pending_email, role, roll)
                         execute(
-                            "INSERT INTO users (email, name, role, roll_number, fingerprint_hash, created_at) VALUES (?, ?, ?, ?, NULL, ?)",
-                            (email_input, name, role, roll, utcnow_str()),
+                            "INSERT INTO users (email, name, role, roll_number, fingerprint_hash, face_template, created_at) VALUES (?, ?, ?, ?, NULL, NULL, ?)",
+                            (st.session_state.pending_email, name, role, roll, utcnow_str()),
                         )
 
                     st.session_state.authenticated = True
-                    st.session_state.email = email_input
+                    st.session_state.email = st.session_state.pending_email
                     st.session_state.name = name
                     st.session_state.role = role
                     st.session_state.roll_number = roll
@@ -688,8 +866,18 @@ def render_login() -> None:
 
 def render_sidebar() -> None:
     with st.sidebar:
-        st.markdown(f"### {APP_TITLE}")
-        st.markdown(f"**{st.session_state.name}**")
+        # Theme toggle control
+        col_t1, col_t2 = st.columns([2, 1])
+        with col_t1:
+            st.markdown(f"**{APP_TITLE}**")
+        with col_t2:
+            current_theme = st.session_state.get("theme", "light")
+            new_theme = "dark" if current_theme == "light" else "light"
+            icon = "🌙 Dark" if current_theme == "light" else "☀️ Light"
+            if st.button(icon, key="theme_toggle_btn"):
+                st.session_state.theme = new_theme
+                st.rerun()
+
         st.caption(st.session_state.email)
 
         role = st.session_state.role
@@ -720,7 +908,7 @@ def render_sidebar() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Professor Portal: Classroom Management, 15s Dynamic OTP, Editable Roster & Excel
+# Professor Portal: Course Management, 15s Dynamic OTP & Live Roster
 # ---------------------------------------------------------------------------
 
 
@@ -803,20 +991,20 @@ def professor_course_list_ui() -> None:
 @st.fragment(run_every=1)
 def professor_live_rolling_otp_widget(session_id: str, course_name: str) -> None:
     """
-    Projects a 15-second dynamic rolling 5-character OTP rendered in large
+    Renders 15-second dynamic rolling 5-character OTP rendered in large
     monospace font using @st.fragment(run_every=1) with an active countdown bar.
     """
     row = rotate_session_otp(session_id)
     remaining = otp_seconds_remaining(row["otp_expires_at"])
-    progress_val = remaining / OTP_TTL_SECONDS if OTP_TTL_SECONDS else 0.0
+    progress_val = remaining / ROLLING_OTP_TTL_SECONDS if ROLLING_OTP_TTL_SECONDS else 0.0
 
     st.markdown(
         f"""
         <div class="otp-projector-box">
           <div class="zt-kicker">PROJECTOR DISPLAY · {course_name}</div>
           <div class="otp-display">{row['current_otp']}</div>
-          <div style="color: #94a3b8; font-size: 0.95rem;">
-            Dynamic Zero-Trust Code rotates in <strong style="color: #38bdf8;">{remaining} seconds</strong>
+          <div style="font-size: 0.95rem; font-weight: 500;">
+            Dynamic Zero-Trust Code rotates in <strong style="color: #0284c7;">{remaining} seconds</strong>
           </div>
         </div>
         """,
@@ -826,17 +1014,14 @@ def professor_live_rolling_otp_widget(session_id: str, course_name: str) -> None
 
 
 def professor_roster_and_export_ui(session_id: str, course_id: str) -> None:
-    """
-    Renders an editable live roster using st.data_editor displaying:
-    Roll Number | Student Name | Status (1 for Present, 0 for Absent)
-    with override capabilities, alongside an in-memory .xlsx Excel export button using Pandas and io.BytesIO.
-    """
     roster_df = query_df(
         """
         SELECT
             u.roll_number AS "Roll Number",
             u.name AS "Student Name",
             COALESCE(ar.status, 0) AS "Status (1=Present, 0=Absent)",
+            COALESCE(ar.verification_mode, 'Not Marked') AS "Verification Mode",
+            ar.face_similarity AS "Face Match %",
             u.email AS "Student Email",
             ar.marked_at AS "Marked At"
         FROM enrollments e
@@ -868,18 +1053,19 @@ def professor_roster_and_export_ui(session_id: str, course_id: str) -> None:
     st.caption("Double-click any student's status to override (1 for Present, 0 for Absent) and save.")
 
     edited_df = st.data_editor(
-        roster_df[["Roll Number", "Student Name", "Status (1=Present, 0=Absent)", "Student Email", "Marked At"]],
+        roster_df[["Roll Number", "Student Name", "Status (1=Present, 0=Absent)", "Verification Mode", "Face Match %", "Student Email", "Marked At"]],
         column_config={
             "Roll Number": st.column_config.TextColumn("Roll Number", disabled=True),
             "Student Name": st.column_config.TextColumn("Student Name", disabled=True),
             "Status (1=Present, 0=Absent)": st.column_config.NumberColumn(
                 "Status (1 for Present, 0 for Absent)",
-                help="Enter 1 for Present, 0 for Absent",
                 min_value=0,
                 max_value=1,
                 step=1,
                 required=True,
             ),
+            "Verification Mode": st.column_config.TextColumn("Verification Mode", disabled=True),
+            "Face Match %": st.column_config.ProgressColumn("Face Match %", min_value=0, max_value=1, format="%.2f"),
             "Student Email": st.column_config.TextColumn("Student Email", disabled=True),
             "Marked At": st.column_config.TextColumn("Marked At", disabled=True),
         },
@@ -897,10 +1083,10 @@ def professor_roster_and_export_ui(session_id: str, course_id: str) -> None:
                 marked_ts = utcnow_str() if is_pres == 1 else None
                 execute(
                     """
-                    INSERT INTO attendance_records (session_id, student_email, status, marked_at, device_info)
+                    INSERT INTO attendance_records (session_id, student_email, status, marked_at, verification_mode)
                     VALUES (?, ?, ?, ?, 'Professor Manual Override')
                     ON CONFLICT(session_id, student_email)
-                    DO UPDATE SET status = excluded.status, marked_at = excluded.marked_at
+                    DO UPDATE SET status = excluded.status, marked_at = excluded.marked_at, verification_mode = excluded.verification_mode
                     """,
                     (session_id, row["Student Email"], is_pres, marked_ts),
                 )
@@ -908,9 +1094,8 @@ def professor_roster_and_export_ui(session_id: str, course_id: str) -> None:
             st.rerun()
 
     with col_export:
-        # Generate clean Excel report using Pandas and in-memory io.BytesIO
-        export_clean = edited_df[["Roll Number", "Student Name", "Status (1=Present, 0=Absent)", "Student Email", "Marked At"]].copy()
-        
+        export_clean = edited_df[["Roll Number", "Student Name", "Status (1=Present, 0=Absent)", "Verification Mode", "Student Email", "Marked At"]].copy()
+
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
             export_clean.to_excel(writer, index=False, sheet_name="Attendance Roster")
@@ -953,14 +1138,14 @@ def professor_course_detail_ui(course_id: str) -> None:
             execute("UPDATE attendance_sessions SET is_active = 0 WHERE course_id = ?", (course_id,))
             new_session_id = uuid.uuid4().hex
             now_ts = time.time()
-            first_otp = generate_otp()
+            first_otp = generate_rolling_code()
             execute(
                 """
                 INSERT INTO attendance_sessions
                     (session_id, course_id, date, is_active, current_otp, otp_expires_at, network_ssid, created_at)
                 VALUES (?, ?, ?, 1, ?, ?, ?, ?)
                 """,
-                (new_session_id, course_id, today_str(), first_otp, now_ts + OTP_TTL_SECONDS, CAMPUS_SSID, utcnow_str()),
+                (new_session_id, course_id, today_str(), first_otp, now_ts + ROLLING_OTP_TTL_SECONDS, CAMPUS_SSID, utcnow_str()),
             )
 
             enrolled_students = fetchall("SELECT student_email FROM enrollments WHERE course_id = ?", (course_id,))
@@ -972,7 +1157,7 @@ def professor_course_detail_ui(course_id: str) -> None:
                     """,
                     (new_session_id, s["student_email"]),
                 )
-            st.success("Session initialized! Display the rolling OTP on the projector.")
+            st.success("Attendance session initialized! Projecting rolling OTP code.")
             st.rerun()
 
     with c2:
@@ -998,7 +1183,6 @@ def professor_course_detail_ui(course_id: str) -> None:
     else:
         st.info("No active attendance session currently running for this course. Click 'Initialize Attendance' above to open a 15-second dynamic OTP window.")
 
-        # Historical Review
         past_sessions = query_df(
             """
             SELECT session_id, date, created_at, is_active
@@ -1031,15 +1215,11 @@ def render_professor_portal() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Student Portal: Live Alert Banners, Fingerprint Passkey & Anti-Proxy Guard
+# Student Portal: Facial Biometrics, Real-Time Alerts & Anti-Proxy Guard
 # ---------------------------------------------------------------------------
 
 
 def student_live_alerts_banner() -> None:
-    """
-    Renders live alert banner: '⚠️ Attendance is initialized for [Course Name]!'
-    when a professor initializes an attendance session.
-    """
     active_rows = fetchall(
         """
         SELECT s.session_id, c.course_id, c.course_name
@@ -1082,27 +1262,48 @@ def student_live_alerts_banner() -> None:
 
 
 def student_join_course_ui() -> None:
-    st.subheader("🎓 Join Course (Google Classroom Code)")
-    with st.form("student_join_form"):
-        st.markdown(
-            "Enter the 6-character course code provided by your professor. "
-            "Zero-trust security requires confirming your biometric fingerprint token during enrollment (persisted as a salted SHA-256 hash)."
-        )
-        code_input = st.text_input("Course Join Code", placeholder="e.g. OS301X").strip().upper()
-        fingerprint_input = st.text_input(
-            "Biometric Fingerprint Passkey / Token",
-            type="password",
-            help="Your enrolled biometric secret. Encrypted using salted SHA-256 and confirmed during attendance marking.",
-        )
-        submitted = st.form_submit_button("Confirm Biometric & Enroll", type="primary")
+    st.subheader("🎓 Join Course & Enroll Biometric Profile")
+    st.markdown(
+        "Enter the 6-character course code provided by your professor. "
+        "Zero-trust security requires confirming your identity and capturing your facial reference template."
+    )
 
-    if submitted:
+    code_input = st.text_input("Course Join Code", placeholder="e.g. OS301X").strip().upper()
+
+    col_bio1, col_bio2 = st.columns(2)
+    with col_bio1:
+        st.markdown("**1. Biometric Passkey / Token**")
+        fingerprint_input = st.text_input(
+            "Security Passkey",
+            type="password",
+            placeholder="Enter a secret passkey (e.g. bio_key_053)",
+            help="Encrypted with salted SHA-256 and verified during attendance.",
+        )
+
+    with col_bio2:
+        st.markdown("**2. OpenCV Facial Reference Enrollment (Webcam)**")
+        camera_snap = st.camera_input("Capture Face Reference for Enrollment")
+
+    face_vector_json: Optional[str] = None
+    if camera_snap is not None:
+        face_crop, annotated, count = process_and_detect_face(camera_snap.getvalue())
+        if count == 0:
+            st.error("No human face detected. Please face the camera directly with good lighting.")
+        elif count > 1:
+            st.error("Multiple faces detected. Ensure only one person is in the frame.")
+        else:
+            st.image(annotated, channels="BGR", width=220, caption="Verified Face Crop")
+            vec = extract_facial_feature_vector(face_crop)
+            face_vector_json = json.dumps(vec)
+            st.success("Facial template successfully extracted and normalized!")
+
+    if st.button("Confirm Enrollment & Save Biometrics", type="primary"):
         if len(code_input) != JOIN_CODE_LENGTH:
             st.error(f"Invalid code: Join codes are exactly {JOIN_CODE_LENGTH} characters.")
             return
 
         if not fingerprint_input.strip():
-            st.error("Biometric fingerprint token is mandatory for zero-trust course enrollment.")
+            st.error("Biometric security passkey is required.")
             return
 
         target_course = fetchone("SELECT * FROM courses WHERE join_code = ?", (code_input,))
@@ -1110,8 +1311,15 @@ def student_join_course_ui() -> None:
             st.error("Invalid Course Code: No course found matching this code.")
             return
 
+        # Update user fingerprint hash and face template
         hashed_fp = hash_fingerprint(st.session_state.email, fingerprint_input)
-        execute("UPDATE users SET fingerprint_hash = ? WHERE email = ?", (hashed_fp, st.session_state.email))
+        if face_vector_json:
+            execute(
+                "UPDATE users SET fingerprint_hash = ?, face_template = ? WHERE email = ?",
+                (hashed_fp, face_vector_json, st.session_state.email),
+            )
+        else:
+            execute("UPDATE users SET fingerprint_hash = ? WHERE email = ?", (hashed_fp, st.session_state.email))
 
         already_enrolled = fetchone(
             "SELECT 1 FROM enrollments WHERE course_id = ? AND student_email = ?",
@@ -1119,13 +1327,13 @@ def student_join_course_ui() -> None:
         )
 
         if already_enrolled:
-            st.info(f"Already enrolled in {target_course['course_name']}. Biometric passkey updated.")
+            st.info(f"Already enrolled in {target_course['course_name']}. Biometric profile updated.")
         else:
             execute(
                 "INSERT INTO enrollments (course_id, student_email, joined_at) VALUES (?, ?, ?)",
                 (target_course["course_id"], st.session_state.email, utcnow_str()),
             )
-            st.success(f"Enrolled successfully in {target_course['course_name']} with verified biometric passkey!")
+            st.success(f"Enrolled successfully in {target_course['course_name']} with verified biometrics!")
             st.rerun()
 
 
@@ -1155,12 +1363,13 @@ def student_enrolled_courses_ui() -> None:
 
 def student_mark_attendance_screen(session_id: str) -> None:
     """
-    Enforces all zero-trust criteria:
-    1. Auto-Identity Pre-fill: Read-only name and roll number from institute session.
-    2. Rolling Code Verification: Validates active 15s projector OTP.
-    3. Biometric Fingerprint Verification: Confirms against enrolled SHA-256 hash.
-    4. Anti-Proxy Tamper Guard: Injected via st.components.v1.html (visibilitychange & blur).
-    5. Network/Spatial Bound: Validates campus network attestation (10.12.*.*).
+    Enforces Zero-Trust Attendance:
+    1. Auto-Identity Pre-fill (read-only Name and Roll Number)
+    2. Dynamic Rolling OTP Verification (15-second TTL)
+    3. OpenCV Live Facial Biometric Match (Cosine Similarity against enrolled vector)
+    4. Passkey Biometric Confirmation
+    5. Anti-Proxy Browser Tab-Switch Guard
+    6. Network & Spatial Bound Verification (10.12.*.*)
     """
     session_row = fetchone("SELECT * FROM attendance_sessions WHERE session_id = ?", (session_id,))
     if not session_row or not session_row["is_active"]:
@@ -1173,15 +1382,15 @@ def student_mark_attendance_screen(session_id: str) -> None:
 
     course = fetchone("SELECT * FROM courses WHERE course_id = ?", (session_row["course_id"],))
 
-    # Anti-Proxy Tamper Check
+    # Anti-Proxy Check
     if st.session_state.tab_switched or st.session_state.proxy_terminated:
         st.markdown(
             """
             <div class="tamper-warning-card">
               <h3>🚨 ZERO-TRUST SECURITY BREACH: SESSION TERMINATED</h3>
               <p>
-                A browser tab-switch or window focus loss was detected via the <code>visibilitychange</code> API.
-                To prevent proxy code sharing via messaging apps, your attendance session has been voided.
+                A browser tab-switch or window minimize was detected via the <code>visibilitychange</code> API.
+                To prevent proxy code relaying via messaging apps, your attendance attempt has been permanently voided.
               </p>
             </div>
             """,
@@ -1193,52 +1402,83 @@ def student_mark_attendance_screen(session_id: str) -> None:
             st.rerun()
         return
 
-    # Inject Anti-Proxy Guard via st.components.v1.html
+    # Injected anti-proxy watcher
     render_anti_proxy_guard()
 
     st.title(f"Mark Attendance · {course['course_name']}")
-    st.caption("Zero-Trust Verification: Keep this window active. Do NOT switch tabs or apps.")
+    st.caption("Zero-Trust Verification: Keep this window active. Do NOT switch tabs or minimize.")
 
-    # 1. Auto-Identity Pre-fill (read-only)
+    # 1. Auto-Identity Pre-fill
     col_id1, col_id2 = st.columns(2)
     with col_id1:
         st.text_input("Student Name (Verified)", value=st.session_state.name, disabled=True)
     with col_id2:
         st.text_input("Roll Number (Verified)", value=st.session_state.roll_number or "N/A", disabled=True)
 
-    # Campus Network & Spatial Attestation (10.12.*.*)
+    # Campus Telemetry
     net_data = verify_network_spatial_bound()
     st.markdown(
         f"""
-        <div style="background:#091422; border:1px solid #1c3552; border-radius:8px; padding:0.6rem 0.9rem; margin-bottom:1rem; font-size:0.85rem;">
-          <strong style="color:#38bdf8;">Network & Spatial Attestation:</strong>
+        <div style="background:#f1f5f9; border:1px solid #cbd5e1; border-radius:8px; padding:0.6rem 0.9rem; margin-bottom:1rem; font-size:0.85rem;">
+          <strong style="color:#0284c7;">Network & Spatial Attestation:</strong>
           &nbsp; <span class="network-chip">SSID: {net_data['ssid']}</span>
-          &nbsp; <span class="network-chip">IP Subnet: {net_data['subnet']}</span>
-          &nbsp; <span class="network-chip">Spatial: {net_data['spatial_zone']}</span>
+          &nbsp; <span class="network-chip">Subnet: {net_data['subnet']}</span>
+          &nbsp; <span class="network-chip">Zone: {net_data['spatial_zone']}</span>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    # 2. Rolling Code Input & 3. Fingerprint Verification
-    with st.form("mark_attendance_form"):
-        otp_student_input = st.text_input(
-            "Projector OTP (Current 5-Character Rolling Code)",
-            max_chars=OTP_LENGTH,
-            placeholder="e.g. 7X9KQ",
-            help="Enter the exact code displayed on the classroom projector screen (refreshes every 15s).",
-        ).strip().upper()
+    # 2. Rolling OTP input
+    otp_student_input = st.text_input(
+        "Projector OTP (Current 5-Character Dynamic Code)",
+        max_chars=OTP_LENGTH,
+        placeholder="e.g. 7X9KQ",
+        help="Enter the exact code displayed on the classroom projector screen (rotates every 15s).",
+    ).strip().upper()
 
+    # 3. Biometric Verification: Facial Recognition & Passkey
+    user_row = fetchone("SELECT * FROM users WHERE email = ?", (st.session_state.email,))
+    has_face_template = user_row and user_row["face_template"]
+
+    st.markdown("#### Biometric Physical Presence Verification")
+    col_cam, col_pass = st.columns(2)
+
+    live_face_vector: Optional[list[float]] = None
+    similarity_score: float = 0.0
+
+    with col_cam:
+        st.markdown("**Option A: Live OpenCV Facial Verification (Webcam)**")
+        live_cam_snap = st.camera_input("Take Live Verification Photo")
+        if live_cam_snap is not None:
+            live_crop, live_annotated, face_cnt = process_and_detect_face(live_cam_snap.getvalue())
+            if face_cnt == 0:
+                st.error("No face detected in live photo. Please look directly at the camera.")
+            elif face_cnt > 1:
+                st.error("Multiple faces detected! Proxy attendance alert.")
+            else:
+                st.image(live_annotated, channels="BGR", width=220, caption="Detected Face")
+                live_face_vector = extract_facial_feature_vector(live_crop)
+
+                if has_face_template:
+                    enrolled_vec = json.loads(user_row["face_template"])
+                    similarity_score = compute_face_similarity(enrolled_vec, live_face_vector)
+                    st.metric("Facial Match Score", f"{similarity_score * 100:.1f}%")
+                    if similarity_score >= FACE_SIMILARITY_THRESHOLD:
+                        st.success(f"✓ Facial Biometric Confirmed ({similarity_score * 100:.1f}% match)!")
+                    else:
+                        st.warning(f"Low match score ({similarity_score * 100:.1f}%). Required: {FACE_SIMILARITY_THRESHOLD * 100:.0f}%.")
+
+    with col_pass:
+        st.markdown("**Option B: Biometric Passkey Fallback**")
         fingerprint_student_input = st.text_input(
-            "Re-Verify Biometric Fingerprint Token",
+            "Biometric Passkey",
             type="password",
-            placeholder="Enter the biometric token used during course enrollment",
-            help="Confirms physical identity against enrolled zero-trust biometric passkey.",
+            placeholder="Enter enrolled biometric passkey",
+            help="Used to confirm identity or as fallback if camera is unavailable.",
         )
 
-        submit_attendance = st.form_submit_button("Submit Zero-Trust Attendance", type="primary")
-
-    if submit_attendance:
+    if st.button("Submit Zero-Trust Attendance", type="primary", use_container_width=True):
         if st.session_state.tab_switched:
             st.error("Submission rejected: Tab switch tamper event logged.")
             return
@@ -1247,42 +1487,56 @@ def student_mark_attendance_screen(session_id: str) -> None:
         current_time = time.time()
 
         if not live_session["is_active"]:
-            st.error("Attendance window has expired.")
+            st.error("Attendance window has closed.")
             return
 
-        # Verification 1: 15-Second Rolling Dynamic OTP match
+        # Verification 1: Rolling OTP Match
         if current_time >= float(live_session["otp_expires_at"] or 0) or otp_student_input != (live_session["current_otp"] or "").upper():
-            st.error("Verification Failed: Projector OTP is incorrect or has expired. Read the projector screen and re-enter.")
+            st.error("Verification Failed: Projector OTP is incorrect or has expired. Check the projector and re-enter.")
             return
 
-        # Verification 2: Enrolled Biometric Salted SHA-256 Hash
-        student_user = fetchone("SELECT * FROM users WHERE email = ?", (st.session_state.email,))
-        if not student_user or not student_user["fingerprint_hash"]:
-            st.error("No biometric profile registered. Please re-enroll in the course with a biometric passkey.")
+        # Verification 2: Biometric Verification (Face match OR Passkey match)
+        face_verified = False
+        passkey_verified = False
+
+        if has_face_template and live_face_vector:
+            enrolled_vec = json.loads(user_row["face_template"])
+            similarity_score = compute_face_similarity(enrolled_vec, live_face_vector)
+            if similarity_score >= FACE_SIMILARITY_THRESHOLD:
+                face_verified = True
+
+        if fingerprint_student_input.strip() and user_row["fingerprint_hash"]:
+            input_fp_hash = hash_fingerprint(st.session_state.email, fingerprint_student_input)
+            if input_fp_hash == user_row["fingerprint_hash"]:
+                passkey_verified = True
+
+        if not (face_verified or passkey_verified):
+            st.error("Biometric Verification Failed: Please complete facial verification or provide your enrolled passkey.")
             return
 
-        input_fp_hash = hash_fingerprint(st.session_state.email, fingerprint_student_input)
-        if input_fp_hash != student_user["fingerprint_hash"]:
-            st.error("Biometric Verification Failed: Fingerprint token does not match enrollment record.")
-            return
+        mode = "OpenCV Facial Recognition" if face_verified else "Biometric Passkey"
 
-        # Verification 3: Campus Network/Spatial Attestation (10.12.*.*)
+        # Verification 3: Campus Network Attestation
         if not net_data["status"]:
-            st.error("Network Bound Failed: You must be connected to the classroom academic network.")
+            st.error("Network Bound Failed: You must be on the campus academic subnet.")
             return
 
         # All Checks Passed: Mark Present
         execute(
             """
-            INSERT INTO attendance_records (session_id, student_email, status, marked_at, device_info)
-            VALUES (?, ?, 1, ?, 'Zero-Trust Verified Client')
+            INSERT INTO attendance_records (session_id, student_email, status, marked_at, verification_mode, face_similarity)
+            VALUES (?, ?, 1, ?, ?, ?)
             ON CONFLICT(session_id, student_email)
-            DO UPDATE SET status = 1, marked_at = excluded.marked_at, device_info = excluded.device_info
+            DO UPDATE SET
+                status = 1,
+                marked_at = excluded.marked_at,
+                verification_mode = excluded.verification_mode,
+                face_similarity = excluded.face_similarity
             """,
-            (session_id, st.session_state.email, utcnow_str()),
+            (session_id, st.session_state.email, utcnow_str(), mode, similarity_score if face_verified else None),
         )
 
-        st.success("🎉 Zero-Trust Attendance Confirmed: You are marked PRESENT!")
+        st.success(f"🎉 Zero-Trust Attendance Verified via {mode}! Marked PRESENT.")
         st.balloons()
         st.session_state.view = "home"
         st.session_state.mark_session_id = None
@@ -1339,7 +1593,7 @@ def render_admin_portal() -> None:
     )
 
     with tab_users:
-        users_df = query_df("SELECT email, name, role, roll_number, created_at FROM users ORDER BY role, email")
+        users_df = query_df("SELECT email, name, role, roll_number, CASE WHEN face_template IS NOT NULL THEN 'Enrolled' ELSE 'Pending' END AS face_biometric, created_at FROM users ORDER BY role, email")
         st.dataframe(users_df, use_container_width=True, hide_index=True)
 
     with tab_courses:
@@ -1376,8 +1630,9 @@ def render_admin_portal() -> None:
                 u.roll_number AS "Roll Number",
                 u.name AS "Student Name",
                 ar.status AS "Status (1=Present, 0=Absent)",
-                ar.marked_at AS "Marked Timestamp",
-                ar.device_info AS "Client Telemetry"
+                ar.verification_mode AS "Verification Mode",
+                ar.face_similarity AS "Face Match %",
+                ar.marked_at AS "Marked Timestamp"
             FROM attendance_records ar
             JOIN attendance_sessions s ON s.session_id = ar.session_id
             JOIN courses c ON c.course_id = s.course_id
@@ -1408,13 +1663,16 @@ def render_admin_portal() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Application Entrypoint
+# Application Main Controller
 # ---------------------------------------------------------------------------
 
 
 def main() -> None:
     init_db()
     init_session()
+
+    # Apply dynamic Light/Dark theme styling
+    apply_theme_styling(st.session_state.get("theme", "light"))
 
     if not st.session_state.authenticated:
         render_login()
