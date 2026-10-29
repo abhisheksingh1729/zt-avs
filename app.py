@@ -65,27 +65,59 @@ def apply_theme_styling(theme_mode: str) -> None:
     is_dark = theme_mode == "dark"
 
     if is_dark:
+        bg_color = "#07111f"
         bg_gradient = "radial-gradient(circle at 15% 15%, #0f1d30 0%, #081321 65%, #040912 100%)"
-        card_bg = "rgba(18, 36, 58, 0.85)"
+        card_bg = "rgba(18, 36, 58, 0.90)"
         card_border = "#1e3a5f"
         text_primary = "#f8fafc"
+        text_secondary = "#cbd5e1"
         text_muted = "#94a3b8"
         sidebar_bg = "#081321"
         sidebar_border = "#1a2f4a"
         projector_bg = "linear-gradient(135deg, #0b1a2e 0%, #07101d 100%)"
         projector_border = "#38bdf8"
         code_box_bg = "#091422"
+        btn_sec_bg = "#1e293b"
+        btn_sec_color = "#f8fafc"
+        btn_sec_border = "#334155"
+        btn_sec_hover_bg = "#334155"
+        btn_sec_hover_color = "#38bdf8"
+        input_bg = "#0f172a"
+        input_border = "#334155"
+        input_color = "#f8fafc"
+        box_bg = "#0f1d30"
+        box_border = "#1e3a5f"
+        box_text = "#e2e8f0"
+        tamper_card_bg = "#450a0a"
+        tamper_card_border = "#ef4444"
+        tamper_card_text = "#fecaca"
     else:
+        bg_color = "#f8fafc"
         bg_gradient = "linear-gradient(180deg, #f8fafc 0%, #f1f5f9 60%, #e2e8f0 100%)"
         card_bg = "#ffffff"
         card_border = "#cbd5e1"
         text_primary = "#0f172a"
+        text_secondary = "#334155"
         text_muted = "#64748b"
         sidebar_bg = "#ffffff"
         sidebar_border = "#e2e8f0"
         projector_bg = "linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)"
         projector_border = "#2563eb"
         code_box_bg = "#f1f5f9"
+        btn_sec_bg = "#ffffff"
+        btn_sec_color = "#0f172a"
+        btn_sec_border = "#cbd5e1"
+        btn_sec_hover_bg = "#f1f5f9"
+        btn_sec_hover_color = "#0284c7"
+        input_bg = "#ffffff"
+        input_border = "#cbd5e1"
+        input_color = "#0f172a"
+        box_bg = "#f1f5f9"
+        box_border = "#cbd5e1"
+        box_text = "#0f172a"
+        tamper_card_bg = "#fef2f2"
+        tamper_card_border = "#ef4444"
+        tamper_card_text = "#991b1b"
 
     st.markdown(
         f"""
@@ -97,8 +129,9 @@ def apply_theme_styling(theme_mode: str) -> None:
           }}
           
           .stApp {{
-            background: {bg_gradient};
-            color: {text_primary};
+            background: {bg_gradient} !important;
+            background-color: {bg_color} !important;
+            color: {text_primary} !important;
           }}
           
           .block-container {{
@@ -107,10 +140,14 @@ def apply_theme_styling(theme_mode: str) -> None:
             max-width: 1260px;
           }}
           
-          h1, h2, h3, h4 {{
+          h1, h2, h3, h4, h5, h6 {{
             color: {text_primary} !important;
             font-weight: 700;
             letter-spacing: -0.025em;
+          }}
+          
+          p, span, label, div {{
+            color: inherit;
           }}
           
           [data-testid="stSidebar"] {{
@@ -118,6 +155,82 @@ def apply_theme_styling(theme_mode: str) -> None:
             border-right: 1px solid {sidebar_border} !important;
           }}
           
+          /* Secondary Buttons Styling (Overrides default dark button appearance in light mode) */
+          div.stButton > button,
+          div.stButton > button:not([kind="primary"]),
+          button[data-testid="stBaseButton-secondary"],
+          button[data-testid="baseButton-secondary"] {{
+            background-color: {btn_sec_bg} !important;
+            color: {btn_sec_color} !important;
+            border: 1px solid {btn_sec_border} !important;
+            border-radius: 8px !important;
+            font-weight: 600 !important;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06) !important;
+            transition: all 0.2s ease !important;
+          }}
+          
+          div.stButton > button:hover,
+          div.stButton > button:not([kind="primary"]):hover,
+          button[data-testid="stBaseButton-secondary"]:hover,
+          button[data-testid="baseButton-secondary"]:hover {{
+            background-color: {btn_sec_hover_bg} !important;
+            border-color: {btn_sec_hover_color} !important;
+            color: {btn_sec_hover_color} !important;
+          }}
+
+          /* Primary Buttons Styling */
+          div.stButton > button[kind="primary"],
+          button[data-testid="stBaseButton-primary"],
+          button[data-testid="baseButton-primary"],
+          [data-testid="stFormSubmitButton"] > button {{
+            background-color: #2563eb !important;
+            color: #ffffff !important;
+            border: 1px solid #1d4ed8 !important;
+            border-radius: 8px !important;
+            font-weight: 700 !important;
+            box-shadow: 0 2px 6px rgba(37, 99, 235, 0.25) !important;
+          }}
+          
+          div.stButton > button[kind="primary"]:hover,
+          [data-testid="stFormSubmitButton"] > button:hover {{
+            background-color: #1d4ed8 !important;
+            border-color: #1e40af !important;
+            color: #ffffff !important;
+          }}
+
+          /* Text & Form Inputs */
+          div[data-testid="stTextInput"] input,
+          div[data-testid="stNumberInput"] input,
+          div[data-baseweb="input"] input {{
+            background-color: {input_bg} !important;
+            color: {input_color} !important;
+            border: 1px solid {input_border} !important;
+            border-radius: 8px !important;
+          }}
+          
+          div[data-testid="stTextInput"] input:focus,
+          div[data-testid="stNumberInput"] input:focus {{
+            border-color: #2563eb !important;
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18) !important;
+          }}
+
+          div[data-testid="stWidgetLabel"] label,
+          div[data-testid="stWidgetLabel"] p {{
+            color: {text_primary} !important;
+            font-weight: 600 !important;
+          }}
+
+          /* Metrics */
+          [data-testid="stMetricValue"] {{
+            color: {text_primary} !important;
+            font-weight: 700 !important;
+          }}
+
+          [data-testid="stMetricLabel"] {{
+            color: {text_muted} !important;
+            font-weight: 600 !important;
+          }}
+
           .zt-kicker {{
             color: #0284c7;
             font-size: 0.76rem;
@@ -134,6 +247,20 @@ def apply_theme_styling(theme_mode: str) -> None:
             padding: 1.2rem;
             margin-bottom: 1rem;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+          }}
+
+          .zt-box {{
+            background: {box_bg};
+            border: 1px solid {box_border};
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            margin: 0.8rem 0;
+            color: {box_text};
+            font-size: 0.88rem;
+          }}
+          
+          .zt-muted {{
+            color: {text_muted} !important;
           }}
           
           .join-code-badge {{
@@ -209,11 +336,11 @@ def apply_theme_styling(theme_mode: str) -> None:
           .role-student {{ background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }}
           
           .tamper-warning-card {{
-            background: #fef2f2;
-            border: 2px solid #ef4444;
+            background: {tamper_card_bg};
+            border: 2px solid {tamper_card_border};
             border-radius: 10px;
             padding: 1.1rem;
-            color: #991b1b;
+            color: {tamper_card_text};
             margin-bottom: 1rem;
           }}
         </style>
@@ -223,7 +350,7 @@ def apply_theme_styling(theme_mode: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Database Layer (SQLite WAL Mode & Persistent Connection)
+# Database Layer (SQLite WAL Mode & Schema Migration)
 # ---------------------------------------------------------------------------
 
 
@@ -324,7 +451,7 @@ def init_db() -> None:
                 student_email TEXT NOT NULL,
                 status INTEGER NOT NULL DEFAULT 0 CHECK(status IN (0, 1)),
                 marked_at TEXT,
-                verification_mode TEXT,
+                verification_mode TEXT DEFAULT 'Direct Verification',
                 face_similarity REAL,
                 PRIMARY KEY (session_id, student_email),
                 FOREIGN KEY (session_id) REFERENCES attendance_sessions(session_id),
@@ -341,10 +468,20 @@ def init_db() -> None:
             """
         )
 
-        # Ensure face_template column exists if migrating from earlier schema
-        cols = [r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
-        if "face_template" not in cols:
+        # Automated schema migration checks across existing databases
+        user_cols = [r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
+        if "face_template" not in user_cols:
             conn.execute("ALTER TABLE users ADD COLUMN face_template TEXT")
+
+        rec_cols = [r["name"] for r in conn.execute("PRAGMA table_info(attendance_records)").fetchall()]
+        if "verification_mode" not in rec_cols:
+            conn.execute("ALTER TABLE attendance_records ADD COLUMN verification_mode TEXT DEFAULT 'Direct Verification'")
+        if "face_similarity" not in rec_cols:
+            conn.execute("ALTER TABLE attendance_records ADD COLUMN face_similarity REAL")
+
+        sess_cols = [r["name"] for r in conn.execute("PRAGMA table_info(attendance_sessions)").fetchall()]
+        if "network_ssid" not in sess_cols:
+            conn.execute("ALTER TABLE attendance_sessions ADD COLUMN network_ssid TEXT DEFAULT 'IIITDWD-ACADEMIC-5G'")
 
 
 # ---------------------------------------------------------------------------
@@ -368,7 +505,6 @@ def dispatch_email_otp(recipient_email: str) -> dict[str, Any]:
     expires_ts = now_ts + EMAIL_OTP_TTL_SECONDS
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-    # Store OTP in database with TTL
     execute(
         """
         INSERT INTO email_otps (email, otp_code, expires_at, created_at)
@@ -381,7 +517,6 @@ def dispatch_email_otp(recipient_email: str) -> dict[str, Any]:
         (recipient_email, code, expires_ts, now_iso),
     )
 
-    # Check for live SMTP configuration
     smtp_host = os.environ.get("SMTP_HOST")
     smtp_port = int(os.environ.get("SMTP_PORT", "587"))
     smtp_user = os.environ.get("SMTP_USER")
@@ -404,7 +539,7 @@ def dispatch_email_otp(recipient_email: str) -> dict[str, Any]:
                 server.login(smtp_user, smtp_pass)
                 server.sendmail(smtp_user, [recipient_email], msg.as_string())
             smtp_sent = True
-        except Exception as e:
+        except Exception:
             smtp_sent = False
 
     return {
@@ -430,7 +565,6 @@ def verify_email_otp(email: str, input_otp: str) -> tuple[bool, str]:
     if input_otp.strip() != row["otp_code"].strip():
         return False, "Incorrect verification code. Please check and re-enter."
 
-    # Code verified: consume and invalidate OTP
     execute("DELETE FROM email_otps WHERE email = ?", (email,))
     return True, "Authenticated successfully."
 
@@ -439,7 +573,6 @@ def verify_email_otp(email: str, input_otp: str) -> tuple[bool, str]:
 # Computer Vision & Facial Biometrics Engine (OpenCV)
 # ---------------------------------------------------------------------------
 
-# Load OpenCV frontal face cascade
 FACE_CASCADE_PATH = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
 face_cascade = cv2.CascadeClassifier(FACE_CASCADE_PATH)
 
@@ -463,11 +596,9 @@ def process_and_detect_face(image_bytes: bytes) -> tuple[Optional[np.ndarray], O
     if face_count == 0:
         return None, annotated, 0
 
-    # Pick the largest detected face
     faces_sorted = sorted(faces, key=lambda f: f[2] * f[3], reverse=True)
     x, y, w, h = faces_sorted[0]
 
-    # Draw bounding box
     cv2.rectangle(annotated, (x, y), (x + w, y + h), (0, 255, 0), 2)
     cv2.putText(annotated, "FACE DETECTED", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
@@ -483,7 +614,6 @@ def extract_facial_feature_vector(face_crop: np.ndarray) -> list[float]:
     resized = cv2.resize(face_crop, (128, 128))
     equalized = cv2.equalizeHist(resized)
 
-    # 4x4 spatial grid with 16-bin histogram per block
     features: list[float] = []
     for r in range(4):
         for c in range(4):
@@ -638,7 +768,6 @@ def init_session() -> None:
         if key not in st.session_state:
             st.session_state[key] = value
 
-    # Query params tamper detection bridge
     params = st.query_params
     if params.get("tamper_violation") == "tab_switched":
         st.session_state.tab_switched = True
@@ -664,18 +793,23 @@ def logout() -> None:
 # ---------------------------------------------------------------------------
 
 
-def render_anti_proxy_guard() -> None:
-    guard_html = """
+def render_anti_proxy_guard(theme_mode: str = "light") -> None:
+    is_dark = theme_mode == "dark"
+    shield_bg = "#091422" if is_dark else "#f8fafc"
+    shield_border = "#1e3a5f" if is_dark else "#cbd5e1"
+    shield_text = "#94a3b8" if is_dark else "#334155"
+
+    guard_html = f"""
     <div id="zt-guard-shield" style="
-      background: #f8fafc;
-      border: 1px solid #cbd5e1;
+      background: {shield_bg};
+      border: 1px solid {shield_border};
       border-radius: 8px;
       padding: 9px 14px;
       margin-bottom: 10px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      color: #334155;
+      color: {shield_text};
       font-family: monospace;
       font-size: 11px;
     ">
@@ -684,65 +818,65 @@ def render_anti_proxy_guard() -> None:
     </div>
 
     <script>
-    (function() {
+    (function() {{
       var triggered = false;
 
-      function triggerTamperViolation(reason) {
+      function triggerTamperViolation(reason) {{
         if (triggered) return;
         triggered = true;
 
         var shield = document.getElementById('zt-guard-shield');
-        if (shield) {
+        if (shield) {{
           shield.style.background = '#fef2f2';
           shield.style.border = '2px solid #ef4444';
           shield.innerHTML = '<span style="color:#b91c1c;font-weight:bold;">🚨 ZERO-TRUST TAMPER TRIGGERED: TAB SWITCH / FOCUS LOSS DETECTED! TERMINATING...</span>';
-        }
+        }}
 
-        try {
-          if (window.parent && window.parent.document) {
+        try {{
+          if (window.parent && window.parent.document) {{
             var banner = window.parent.document.getElementById('zt-parent-lockout');
-            if (!banner) {
+            if (!banner) {{
               banner = window.parent.document.createElement('div');
               banner.id = 'zt-parent-lockout';
               banner.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(15,23,42,0.95);z-index:999999;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#ffffff;font-family:sans-serif;text-align:center;padding:24px;';
               banner.innerHTML = '<h1 style="color:#ef4444;font-size:32px;margin-bottom:12px;">🚨 ZERO-TRUST SECURITY BREACH</h1><p style="color:#cbd5e1;font-size:18px;max-width:620px;">A tab-switch or window minimize was detected via the visibilitychange API. To prevent proxy code relaying via external messaging apps, your attendance session has been voided.</p><button onclick="window.location.reload()" style="background:#ef4444;color:white;border:none;padding:12px 26px;border-radius:8px;font-size:16px;cursor:pointer;margin-top:20px;font-weight:700;">Acknowledge & Exit</button>';
               window.parent.document.body.appendChild(banner);
-            }
-          }
-        } catch(e) {
+            }}
+          }}
+        }} catch(e) {{
           console.warn("DOM overlay warning:", e);
-        }
+        }}
 
-        try {
-          if (window.parent && window.parent.location) {
+        try {{
+          if (window.parent && window.parent.location) {{
             var url = new URL(window.parent.location.href);
             url.searchParams.set('tamper_violation', 'tab_switched');
             window.parent.location.href = url.toString();
-          }
-        } catch(e) {
+          }}
+        }} catch(e) {{
           console.error("Zero-Trust Bridge Navigation:", e);
-        }
-      }
+        }}
+      }}
 
-      document.addEventListener("visibilitychange", function() {
+      document.addEventListener("visibilitychange", function() {{
         if (document.hidden) triggerTamperViolation("tab_hidden");
-      });
+      }});
 
-      window.addEventListener("blur", function() {
+      window.addEventListener("blur", function() {{
         triggerTamperViolation("window_blur");
-      });
+      }});
 
-      try {
-        if (window.parent && window.parent.document) {
-          window.parent.document.addEventListener("visibilitychange", function() {
+      try {{
+        if (window.parent && window.parent.document) {{
+          window.parent.document.addEventListener("visibilitychange", function() {{
             if (window.parent.document.hidden) triggerTamperViolation("parent_tab_hidden");
-          });
-          window.parent.addEventListener("blur", function() {
+          }});
+          window.parent.addEventListener("blur", function() {{
             triggerTamperViolation("parent_blur");
-          });
-        }
-      } catch(e) {}
-    })();
+          }});
+        }}
+      }} catch(e) {{}}
+    }})();
     </script>
     """
     components.html(guard_html, height=48)
@@ -769,7 +903,7 @@ def render_login() -> None:
             """
             <div class="zt-card">
               <h4 style="margin-top:0; color:#0284c7 !important;">Quick Identity Selector</h4>
-              <p style="color:#64748b; font-size:0.88rem; margin-bottom:0.6rem;">
+              <p class="zt-muted" style="font-size:0.88rem; margin-bottom:0.6rem;">
                 Select an account identity to load into the sign-in input:
               </p>
             </div>
@@ -793,7 +927,7 @@ def render_login() -> None:
             """
             <div class="zt-card">
               <h3 style="margin-top:0;">Institute Sign-In</h3>
-              <p style="color:#64748b; font-size:0.85rem;">
+              <p class="zt-muted" style="font-size:0.85rem;">
                 Access is strictly restricted to valid accounts ending in <code>@iiitdwd.ac.in</code>.
               </p>
             </div>
@@ -822,13 +956,12 @@ def render_login() -> None:
                     st.success(f"Security OTP generated for {email_input}.")
 
         if st.session_state.otp_dispatched:
-            # Active transmission display
             st.markdown(
                 f"""
-                <div style="background:#f1f5f9; border:1px solid #cbd5e1; border-radius:8px; padding:0.75rem 1rem; margin:0.8rem 0; font-size:0.88rem;">
+                <div class="zt-box">
                   <strong style="color:#0284c7;">Institute Mail Gateway:</strong> Code dispatched to <code>{st.session_state.pending_email}</code><br>
-                  <span style="font-family:monospace; font-size:1.15rem; font-weight:700; color:#0f172a;">Active Verification Code: {st.session_state.last_dispatched_otp}</span>
-                  <div style="color:#64748b; font-size:0.75rem; margin-top:2px;">Valid for 5 minutes</div>
+                  <span style="font-family:monospace; font-size:1.15rem; font-weight:700;">Active Verification Code: {st.session_state.last_dispatched_otp}</span>
+                  <div class="zt-muted" style="font-size:0.75rem; margin-top:2px;">Valid for 5 minutes</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -866,8 +999,7 @@ def render_login() -> None:
 
 def render_sidebar() -> None:
     with st.sidebar:
-        # Theme toggle control
-        col_t1, col_t2 = st.columns([2, 1])
+        col_t1, col_t2 = st.columns([2, 1.2])
         with col_t1:
             st.markdown(f"**{APP_TITLE}**")
         with col_t2:
@@ -990,10 +1122,6 @@ def professor_course_list_ui() -> None:
 
 @st.fragment(run_every=1)
 def professor_live_rolling_otp_widget(session_id: str, course_name: str) -> None:
-    """
-    Renders 15-second dynamic rolling 5-character OTP rendered in large
-    monospace font using @st.fragment(run_every=1) with an active countdown bar.
-    """
     row = rotate_session_otp(session_id)
     remaining = otp_seconds_remaining(row["otp_expires_at"])
     progress_val = remaining / ROLLING_OTP_TTL_SECONDS if ROLLING_OTP_TTL_SECONDS else 0.0
@@ -1079,7 +1207,8 @@ def professor_roster_and_export_ui(session_id: str, course_id: str) -> None:
     with col_save:
         if st.button("💾 Save Manual Overrides", type="primary", use_container_width=True):
             for _, row in edited_df.iterrows():
-                is_pres = int(row["Status (1=Present, 0=Absent)"])
+                val = row["Status (1=Present, 0=Absent)"]
+                is_pres = 1 if (pd.notna(val) and int(val) == 1) else 0
                 marked_ts = utcnow_str() if is_pres == 1 else None
                 execute(
                     """
@@ -1094,7 +1223,7 @@ def professor_roster_and_export_ui(session_id: str, course_id: str) -> None:
             st.rerun()
 
     with col_export:
-        export_clean = edited_df[["Roll Number", "Student Name", "Status (1=Present, 0=Absent)", "Verification Mode", "Student Email", "Marked At"]].copy()
+        export_clean = edited_df[["Roll Number", "Student Name", "Status (1=Present, 0=Absent)", "Verification Mode", "Face Match %", "Student Email", "Marked At"]].copy()
 
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
@@ -1152,8 +1281,8 @@ def professor_course_detail_ui(course_id: str) -> None:
             for s in enrolled_students:
                 execute(
                     """
-                    INSERT OR IGNORE INTO attendance_records (session_id, student_email, status, marked_at)
-                    VALUES (?, ?, 0, NULL)
+                    INSERT OR IGNORE INTO attendance_records (session_id, student_email, status, marked_at, verification_mode)
+                    VALUES (?, ?, 0, NULL, 'Not Marked')
                     """,
                     (new_session_id, s["student_email"]),
                 )
@@ -1311,7 +1440,6 @@ def student_join_course_ui() -> None:
             st.error("Invalid Course Code: No course found matching this code.")
             return
 
-        # Update user fingerprint hash and face template
         hashed_fp = hash_fingerprint(st.session_state.email, fingerprint_input)
         if face_vector_json:
             execute(
@@ -1362,15 +1490,6 @@ def student_enrolled_courses_ui() -> None:
 
 
 def student_mark_attendance_screen(session_id: str) -> None:
-    """
-    Enforces Zero-Trust Attendance:
-    1. Auto-Identity Pre-fill (read-only Name and Roll Number)
-    2. Dynamic Rolling OTP Verification (15-second TTL)
-    3. OpenCV Live Facial Biometric Match (Cosine Similarity against enrolled vector)
-    4. Passkey Biometric Confirmation
-    5. Anti-Proxy Browser Tab-Switch Guard
-    6. Network & Spatial Bound Verification (10.12.*.*)
-    """
     session_row = fetchone("SELECT * FROM attendance_sessions WHERE session_id = ?", (session_id,))
     if not session_row or not session_row["is_active"]:
         st.error("The attendance window for this session has closed.")
@@ -1382,7 +1501,6 @@ def student_mark_attendance_screen(session_id: str) -> None:
 
     course = fetchone("SELECT * FROM courses WHERE course_id = ?", (session_row["course_id"],))
 
-    # Anti-Proxy Check
     if st.session_state.tab_switched or st.session_state.proxy_terminated:
         st.markdown(
             """
@@ -1402,24 +1520,21 @@ def student_mark_attendance_screen(session_id: str) -> None:
             st.rerun()
         return
 
-    # Injected anti-proxy watcher
-    render_anti_proxy_guard()
+    render_anti_proxy_guard(theme_mode=st.session_state.get("theme", "light"))
 
     st.title(f"Mark Attendance · {course['course_name']}")
     st.caption("Zero-Trust Verification: Keep this window active. Do NOT switch tabs or minimize.")
 
-    # 1. Auto-Identity Pre-fill
     col_id1, col_id2 = st.columns(2)
     with col_id1:
         st.text_input("Student Name (Verified)", value=st.session_state.name, disabled=True)
     with col_id2:
         st.text_input("Roll Number (Verified)", value=st.session_state.roll_number or "N/A", disabled=True)
 
-    # Campus Telemetry
     net_data = verify_network_spatial_bound()
     st.markdown(
         f"""
-        <div style="background:#f1f5f9; border:1px solid #cbd5e1; border-radius:8px; padding:0.6rem 0.9rem; margin-bottom:1rem; font-size:0.85rem;">
+        <div class="zt-box" style="margin-bottom:1rem; font-size:0.85rem;">
           <strong style="color:#0284c7;">Network & Spatial Attestation:</strong>
           &nbsp; <span class="network-chip">SSID: {net_data['ssid']}</span>
           &nbsp; <span class="network-chip">Subnet: {net_data['subnet']}</span>
@@ -1429,7 +1544,6 @@ def student_mark_attendance_screen(session_id: str) -> None:
         unsafe_allow_html=True,
     )
 
-    # 2. Rolling OTP input
     otp_student_input = st.text_input(
         "Projector OTP (Current 5-Character Dynamic Code)",
         max_chars=OTP_LENGTH,
@@ -1437,7 +1551,6 @@ def student_mark_attendance_screen(session_id: str) -> None:
         help="Enter the exact code displayed on the classroom projector screen (rotates every 15s).",
     ).strip().upper()
 
-    # 3. Biometric Verification: Facial Recognition & Passkey
     user_row = fetchone("SELECT * FROM users WHERE email = ?", (st.session_state.email,))
     has_face_template = user_row and user_row["face_template"]
 
@@ -1495,7 +1608,7 @@ def student_mark_attendance_screen(session_id: str) -> None:
             st.error("Verification Failed: Projector OTP is incorrect or has expired. Check the projector and re-enter.")
             return
 
-        # Verification 2: Biometric Verification (Face match OR Passkey match)
+        # Verification 2: Biometric Verification
         face_verified = False
         passkey_verified = False
 
@@ -1630,7 +1743,7 @@ def render_admin_portal() -> None:
                 u.roll_number AS "Roll Number",
                 u.name AS "Student Name",
                 ar.status AS "Status (1=Present, 0=Absent)",
-                ar.verification_mode AS "Verification Mode",
+                COALESCE(ar.verification_mode, 'Direct Verification') AS "Verification Mode",
                 ar.face_similarity AS "Face Match %",
                 ar.marked_at AS "Marked Timestamp"
             FROM attendance_records ar
@@ -1671,7 +1784,6 @@ def main() -> None:
     init_db()
     init_session()
 
-    # Apply dynamic Light/Dark theme styling
     apply_theme_styling(st.session_state.get("theme", "light"))
 
     if not st.session_state.authenticated:
