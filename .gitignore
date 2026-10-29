@@ -218,3 +218,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Attendance DB and venv
+*.db
+*.db-wal
+*.db-shm
+.venv/
